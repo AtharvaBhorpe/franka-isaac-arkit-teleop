@@ -52,11 +52,11 @@ Pinocchio inverse kinematics.
 ## 2. Get the project
 
 ```bash
-git clone <YOUR_REPO_URL> franka-arktit-teleop
-cd franka-arktit-teleop
+git clone <YOUR_REPO_URL> franka-isaac-arkit-teleop
+cd franka-isaac-arkit-teleop
 ```
 
-Work from the **Linux filesystem** (e.g. `~/franka-arktit-teleop`), not a mounted
+Work from the **Linux filesystem** (e.g. `~/franka-isaac-arkit-teleop`), not a mounted
 Windows/NTFS partition.
 
 ---
@@ -275,12 +275,13 @@ cube is gripped, carried without slipping, and dropped in the bin.
 | `teleop_arkit/ik.py` | Compact Pinocchio Cartesian servo-IK (our code). |
 | `teleop_arkit/joint_command_node.py` | ROS node: target → IK → `/joint_command` (+ gripper). |
 | `teleop_arkit/arkit_receiver.py` | ROS node: ZIG SIM ARKit+touch → `/target_frame` + `/gripper_command`. |
+| `teleop_arkit/robot_state_pub.py` | Publishes `/robot_description` + `/tf` for rviz2 `RobotModel` (`pixi run -e ros robot-model`). |
 | `teleop_arkit/sniff_stream.py` | UDP/TCP sniffer to inspect phone packets. |
 | `scripts/run_isaac.sh` | Launches the Isaac binary (sets EULA + ROS2 env). |
 | `scripts/setup_ubuntu.sh` | Driver / symlink / pixi sanity checks. |
 | `pixi.toml` | Default env (binary tasks) + `ros` env (RoboStack). |
 | `.isaac-sim` | Gitignored symlink → your Isaac Sim 6.0 install. |
-| `config/tcp_offset.yaml` | Measured panda_hand→grasp-TCP offset (for IK). |
+| `config/tcp_offset.yaml` | Measured panda_hand→grasp-TCP offset (cross-check; the IK uses the URDF `panda_hand_tcp` frame). |
 | `outputs/` | Camera frames written by runs (gitignored). |
 
 ---
@@ -329,6 +330,10 @@ cube is gripped, carried without slipping, and dropped in the bin.
 RoboStack interop, Pinocchio servo-IK, and **6-DoF iPhone/ARKit teleoperation** —
 you teleop a complete cube→bin pick-and-place from the phone.
 
-**Optional polish not yet done:** rviz2 `RobotModel` (Phase 4.1, needs
-`package://` mesh resolution); finer grip-force tuning. See
-[PROJECT.md](../PROJECT.md) for the full phase log and decisions.
+rviz2 `RobotModel` (Phase 4.1) also works — run `pixi run -e ros robot-model`
+alongside Isaac, then add **RobotModel** (`/robot_description`) + **TF** with
+Fixed Frame `panda_link0`.
+
+**Optional polish not yet done:** finer grip-force tuning. See
+[PROJECT.md](../PROJECT.md) for the
+full phase log and decisions.

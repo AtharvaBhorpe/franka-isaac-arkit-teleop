@@ -4,14 +4,16 @@ Teleoperate a **simulated Franka Emika Panda** in **NVIDIA Isaac Sim 6.0** by
 waving your **iPhone** — using **ARKit** for pose and **ROS2 + Pinocchio** for
 control. The task scene is a small **cube**, a small **bin**, and a
 **wrist-mounted camera**; you pick the cube and drop it in the bin from the
-phone. Built on [SpesRobotics/teleop](https://github.com/SpesRobotics/teleop).
+phone. It reuses the Pinocchio servo-IK *technique* from
+[SpesRobotics/teleop](https://github.com/SpesRobotics/teleop) — not the package;
+the ARKit input path is our own.
 
 This is a **proof-of-concept** phase: no LeRobot, no learning, no tactile
 sensing. The goal is a working real-time teleop loop with all telemetry
 verified.
 
 - **New here? Follow [docs/HOWTO.md](docs/HOWTO.md)** — clone→install→run, step by
-  step (covers Phases 0–3).
+  step (covers Phases 0–6).
 - Plan, decisions, and rationale: [PROJECT.md](PROJECT.md).
 
 ## Platform
@@ -26,12 +28,12 @@ We run Isaac Sim from the **downloaded 6.0 standalone binary** (not the
 as a gitignored symlink at the project root:
 
 ```
-franka-arktit-teleop/.isaac-sim  ->  ~/isaac-sim/6.0.0
+franka-isaac-arkit-teleop/.isaac-sim  ->  ~/isaac-sim/6.0.0
 ```
 
 Everything launches through `scripts/run_isaac.sh`, which uses that symlink and
-the binary's bundled Python. **pixi** is reserved for the ROS2 env (RoboStack
-Jazzy + Pinocchio + teleop), added in Phase 3.
+the binary's bundled Python. **pixi** hosts the ROS2 env (RoboStack Jazzy +
+Pinocchio + our own `teleop_arkit` package).
 
 If you move machines, just re-point the symlink at that machine's install:
 ```bash
@@ -68,5 +70,7 @@ To open the full Isaac Sim GUI app instead: `pixi run isaac-sim`.
 - `pixi` (for the convenience tasks now, the ROS2 env later).
 
 ## Status
-See the phase checklist in [PROJECT.md](PROJECT.md#5-phased-step-plan).
-Currently at **Phase 1**.
+**The full PoC works (Phases 0–6):** you teleop a complete cube→bin
+pick-and-place from the iPhone, and the §6 end-to-end data check is confirmed.
+See the phase checklist in
+[PROJECT.md](PROJECT.md#5-phased-step-plan).

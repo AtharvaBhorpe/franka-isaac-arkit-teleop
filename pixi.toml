@@ -1,6 +1,6 @@
 [workspace]
 channels = ["conda-forge"]
-name = "franka-arktit-teleop"
+name = "franka-isaac-arkit-teleop"
 platforms = ["linux-64"]
 version = "0.1.0"
 

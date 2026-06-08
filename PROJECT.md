@@ -87,48 +87,52 @@ one Linux box. The iPhone connects over WiFi.
 ## 3. Architecture
 
 ```
-                 iPhone (ARKit 6-DoF device pose)
-                          │  WiFi: UDP / WebSocket / OSC
-                          │  (streamer app, e.g. ZIG SIM)
+                 iPhone (ARKit 6-DoF device pose + touch)
+                          │  WiFi: UDP/JSON (ZIG SIM PRO), ~10 Hz
                           ▼
-┌───────────────────────────────────────────────────────────────────────────┐
-│ ONE UBUNTU 26.04 MACHINE (NVIDIA RTX, validated Linux driver)             │
-│                                                                           │
-│  pixi env "ros" (RoboStack ROS2 Jazzy + Pinocchio + teleop)               │
-│  ┌─────────────────────────────────────────────────────────────────┐      │
-│  │ arkit_receiver.py ─ parse stream ─► 4×4 TF (axis remap, clutch, │      │
-│  │     (our code)        scaling)                                  │      │
-│  │                              │                                  │      │
-│  │                              ▼                                  │      │
-│  │ teleop.Teleop ─► teleop.ros2_ik (Pinocchio) ─► ROS2 publish:    │      │
-│  │ (SpesRobotics)      /target_frame (geometry_msgs/PoseStamped)   │      │
-│  │                     (+ IK → joint targets) + gripper cmd        │      │
-│  └─────────────────────────────────────────────────────────────────┘      │
-│             ▲  /joint_states /camera/image_raw /tf                        │
-│             │  ROS2 DDS over localhost (same machine — trivial)           │
-│             ▼  /target_frame  (+ gripper command)                         │
-│  Isaac Sim 6.0 STANDALONE BINARY  (.isaac-sim, bundled Python)            │
-│  ┌───────────────────────────────────────────────────────────────────┐    │
-│  │ • Stock Franka Panda (default parallel-jaw hand, one articulation)│    │
-│  │ • Small cube (~5 cm) + small bin (scaled-down KLT)                │    │
-│  │ • Wrist RGB camera on panda_hand + fixed scene RGB camera         │    │
-│  │ • isaacsim.ros2.bridge (OmniGraph action graph)                   │    │
-│  │     publishes: /joint_states /clock /tf /wrist_cam/* /scene_cam/* │    │
-│  │     subscribes: /target_frame (+ gripper command)                 │    │
-│  └───────────────────────────────────────────────────────────────────┘    │
-└───────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│ ONE UBUNTU 26.04 MACHINE (NVIDIA RTX, validated Linux driver)           │
+│                                                                         │
+│  pixi env "ros" (RoboStack ROS2 Jazzy + Pinocchio + our teleop_arkit)   │
+│  ┌───────────────────────────────────────────────────────────────┐      │
+│  │ arkit_receiver.py   (our code)                                │      │
+│  │   ZIG SIM ARKit + touch  ->  relative EE pose                 │      │
+│  │   (axis remap, clutch, scaling, 6-DoF orientation)            │      │
+│  │     ->  /target_frame  +  /gripper_command                    │      │
+│  │                    │                                          │      │
+│  │                    ▼                                          │      │
+│  │ joint_command_node.py   (our code)                            │      │
+│  │   /target_frame + /gripper_command  ->  Pinocchio servo-IK    │      │
+│  │   (CartesianServoIK, EE = panda_hand_tcp)  ->  /joint_command │      │
+│  └───────────────────────────────────────────────────────────────┘      │
+│        ▲  /joint_states  /wrist_cam/*  /scene_cam/*  /tf  /clock        │
+│        │  ROS2 DDS over localhost (same machine — trivial)              │
+│        ▼  /joint_command   (7 arm + 2 finger JointState)                │
+│  Isaac Sim 6.0 STANDALONE BINARY  (.isaac-sim, bundled Python)          │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │ • Stock Franka Panda (default parallel-jaw hand, one articulation) │ │
+│  │ • Small cube (~5 cm) + small bin (scaled-down KLT)                 │ │
+│  │ • Wrist RGB camera on panda_hand + fixed scene RGB camera          │ │
+│  │ • isaacsim.ros2.bridge (OmniGraph action graph)                    │ │
+│  │     publishes: /joint_states /clock /tf /wrist_cam/* /scene_cam/*  │ │
+│  │     subscribes: /joint_command  ->  ArticulationController         │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Sim from the binary, tooling from pixi.** Isaac Sim (+ its ROS2 bridge) runs in
-the standalone binary's self-contained Python; the RoboStack ROS2 stack
-(+ Pinocchio + teleop) runs in a pixi conda env. They talk over **localhost DDS**
-— the ordinary ROS2 multi-process pattern, with none of the WSL2 networking pain.
-Match `ROS_DOMAIN_ID` and the RMW between Isaac Sim's bridge and the RoboStack
-Jazzy env.
+the standalone binary's self-contained Python; the RoboStack ROS2 stack (+ Pinocchio
++ our `teleop_arkit` package) runs in a pixi conda env. They talk over **localhost
+DDS** — the ordinary ROS2 multi-process pattern, with none of the WSL2 networking
+pain. Match `ROS_DOMAIN_ID` and the RMW between Isaac Sim's bridge and the RoboStack
+Jazzy env. Only `/joint_command` (the IK output) crosses into Isaac; `/target_frame`
+and `/gripper_command` stay inside the `ros` env.
 
-**Key design choice:** the teleop core consumes pose as a **4×4 homogeneous
-matrix**, so the ARKit work is isolated to one adapter (`arkit_receiver.py`);
-everything downstream (ROS2, Pinocchio IK, Isaac Sim) is reused unchanged.
+**Key design choice:** all ARKit-specific work is isolated in one adapter
+(`arkit_receiver.py`), which emits a generic `/target_frame` (`geometry_msgs/PoseStamped`)
++ `/gripper_command`. Everything downstream — the Pinocchio servo-IK node and the Isaac
+side — is input-agnostic, so swapping the phone for another pose source touches only the
+adapter.
 
 ---
 
@@ -146,7 +150,7 @@ everything downstream (ROS2, Pinocchio IK, Isaac Sim) is reused unchanged.
 | Control middleware   | **ROS2 Jazzy** via **RoboStack** (conda; host-OS-independent)       |
 | Teleop adapter       | **our `teleop_arkit` pkg** (own IK node + ARKit receiver); teleop = reference only |
 | Phone input          | **ARKit** pose via an off-the-shelf streamer app (e.g. ZIG SIM)     |
-| IK                   | **Pinocchio** servo-IK (our node; technique cribbed from teleop's `JacobiRobot`). Franka model from `example-robot-data`; grasp-TCP added as a frame from `tcp_offset.yaml`. Isaac does no IK |
+| IK                   | **Pinocchio** servo-IK (our node; technique cribbed from teleop's `JacobiRobot`). Franka model from `example-robot-data`; EE = the URDF's `panda_hand_tcp` frame (≈ the measured `tcp_offset.yaml`). Isaac does no IK |
 | Robot model          | `example-robot-data` Panda URDF + meshes (Pinocchio IK + rviz2)     |
 | NVIDIA driver        | Linux **580.95.05 or later** (validated for 6.0)                    |
 
@@ -154,7 +158,8 @@ everything downstream (ROS2, Pinocchio IK, Isaac Sim) is reused unchanged.
 
 ## 5. Phased Step Plan
 
-Checkboxes track progress; **we are at Phase 1**.
+Checkboxes track progress; **Phases 0–6 are done — the PoC goal is met and the
+end-to-end data-verification pass is complete.**
 
 ### Phase 0 — Prerequisites (Ubuntu)
 - [x] Boot Ubuntu 26.04; NVIDIA driver ≥ 580.95.05 (`nvidia-smi`).
@@ -162,7 +167,7 @@ Checkboxes track progress; **we are at Phase 1**.
 - [x] Download the **Isaac Sim 6.0 standalone binary**, place it at
       `~/isaac-sim/6.0.0`, and symlink it as `.isaac-sim` in the repo.
 
-### Phase 1 — Franka pick-and-place scene (cube + bin + wrist camera)  ◀ START HERE
+### Phase 1 — Franka pick-and-place scene (cube + bin + wrist camera)
 
 > **End state:** one Isaac Sim 6.0 scene with a stock Franka Panda, a ~5 cm cube,
 > a small bin, and a wrist RGB camera. A standalone script proves the cube is
@@ -247,7 +252,7 @@ PNGs land in the gitignored `outputs/`; these copies live in `docs/images/`).
 
 ### Phase 3 — ROS2 environment (RoboStack)
 - [x] **3.1** Added a `ros` pixi env (RoboStack ROS2 Jazzy `ros-base` +
-      `rmw-fastrtps-cpp`, isolated via `no-default-feature`). Pinocchio + teleop
+      `rmw-fastrtps-cpp`, isolated via `no-default-feature`). Pinocchio + example-robot-data
       added in Phase 4. Use: `pixi run -e ros …`.
 - [x] **3.2** **DDS interop confirmed** — the Isaac binary (internal-Jazzy
       FastDDS) and the RoboStack env (Jazzy FastDDS) discover each other over
@@ -265,9 +270,11 @@ PNGs land in the gitignored `outputs/`; these copies live in `docs/images/`).
       (loaded by path — the conda build ships data, not the python loader). It has
       a **`panda_hand_tcp`** frame (canonical 0.1034 m ≈ our measured 0.1095 m), so
       we use it directly as the EE — no `addFrame` needed.
-- [ ] **4.1** Publish the Panda URDF on `/robot_description` + `robot_state_publisher`
-      → rviz2 `RobotModel` shows the solid Franka. (Wrinkle: meshes are
-      `package://example-robot-data/…`; rviz needs that path resolvable.)
+- [x] **4.1** `teleop_arkit/robot_state_pub.py` (`pixi run -e ros robot-model`)
+      publishes the Panda URDF on `/robot_description` (latched) + `/tf` via
+      `robot_state_publisher` → rviz2 `RobotModel` shows the solid Franka tracking
+      `/joint_states`. **Verified live.** The mesh wrinkle is solved by rewriting
+      `package://example-robot-data/…` → absolute `file://$CONDA_PREFIX/share/…`.
 - [x] **4.2** `teleop_arkit/ik.py` — compact Pinocchio DLS Cartesian servo (own
       code; singularity-adaptive damping cribbed from `JacobiRobot`), EE =
       `panda_hand_tcp`. Unit-tested standalone: +10 cm x/z target reached in 250
@@ -306,16 +313,33 @@ PNGs land in the gitignored `outputs/`; these copies live in `docs/images/`).
 - [x] **iPhone teleop pick-and-place WORKS** — move (1 finger) → pinch (2-finger
       tap) to grip → carry → release into the bin. Grasp holds after binding a
       high-friction physics material to cube + fingertips (μs=1.4).
-- [ ] Tidy the §6 data-verification pass (joint_states / cameras / target / closed
-      loop all confirmed individually; do one explicit end-to-end check).
+- [x] **§6 data-verification pass done (2026-06-08)** — one 89 s rosbag
+      (`outputs/phase6_e2e`, light topics only) over a live iPhone pick-and-place
+      confirms all four checks together: `/joint_states` 9 DOF at sim rate;
+      `/target_frame` swept ~0.75×0.89×0.89 m and `/joint_states` followed (max joint
+      Δ 2.94 rad); `/gripper_command` clean close+open; cube centred between the
+      fingers at grasp (wrist cam, saved to `outputs/phase6_grasp*`).
+
+#### Phase 6 verification — captured frames
+
+Frames saved on the gripper-close edge during the live iPhone teleop pass (source
+PNGs land in the gitignored `outputs/`; these copies live in `docs/images/`).
+
+**Wrist cam** — the cube centered between the fingers at grasp:
+
+![Phase 6 wrist camera, grasp](docs/images/phase6_wrist_cam_grasp.png)
+
+**Scene cam** — whole rig: the Franka reaching down to grasp the cube:
+
+![Phase 6 scene camera, grasp](docs/images/phase6_scene_cam_grasp.png)
 
 ---
 
 ## 6. "Getting the data correctly" — verification checklist
 - **Proprioception:** `/joint_states` updates at sim rate with sane joint
   names/positions/velocities (incl. the gripper finger joints).
-- **Perception:** `/camera/image_raw` streams frames at the expected resolution;
-  the cube is visible during grasp.
+- **Perception:** `/wrist_cam/image_raw` + `/scene_cam/image_raw` stream frames at
+  the expected resolution; the cube is visible during grasp.
 - **Pose target:** `/target_frame` tracks iPhone motion 1:1 (within scale) while
   Move is held; the gripper toggle opens/closes the hand.
 - **Closed loop:** commanding `/target_frame` moves the sim Franka and the
@@ -330,11 +354,13 @@ PNGs land in the gitignored `outputs/`; these copies live in `docs/images/`).
   with a calibration pose; add clutch + scaling.
 - **Differential-IK reachability / singularities (teleop)** — phone poses can
   command unreachable or near-singular configs, causing drift or jumps.
-  Mitigation: Pinocchio IK with damping (teleop's `ros2_ik`); clutch + scaling to
-  keep motions in a reachable workspace.
+  Mitigation: our `ik.py` servo with DLS damping (technique from teleop's
+  `ros2_ik`); clutch + scaling to keep motions in a reachable workspace.
 - **TCP-offset propagation** — if Phase 1.5's flange→TCP offset isn't applied in
-  Phase 4 IK, teleop looks right but the EE is off by a few cm. Mitigation: encode
-  it once in `config/tcp_offset.yaml`; both sim and IK read it.
+  Phase 4 IK, teleop looks right but the EE is off by a few cm. Mitigation: the
+  measured offset matches the URDF's built-in `panda_hand_tcp` frame to ~6 mm, so
+  the IK controls that frame directly (§4.0); `config/tcp_offset.yaml` records the
+  measurement as a cross-check (it is not read at runtime).
 - **Bin fit / gripper reach** — a too-deep or too-wide bin makes placement
   awkward. Mitigation: KLT scaled 0.5× (~0.15×0.10×0.073 m); release from above;
   re-check the bounding box on first load (Phase 1.3).
@@ -363,12 +389,12 @@ PNGs land in the gitignored `outputs/`; these copies live in `docs/images/`).
 ├── scripts/setup_ubuntu.sh             # Ubuntu bootstrap (driver + symlink + pixi checks)
 ├── isaac/franka_scene.py               # LIBRARY — constants, helpers, scene builders, ROS2 graph
 ├── isaac/load_franka_pickplace.py      # APP — arg parsing, run loops, main (imports franka_scene)
-├── isaac/load_franka.py                # legacy minimal stock-Franka joint-stream loader
 ├── teleop_arkit/                       # our Python pkg (ros env) — Phase 5
 ├── config/                             # DDS / ARKit configs + tcp_offset.yaml
 └── docs/                               # notes captured as we execute
 ```
-*(`third_party/tsf85/` from the dropped tactile plan is no longer used; safe to remove.)*
+*(`third_party/tsf85/` from the dropped tactile plan was removed 2026-06-08;
+`third_party/teleop` remains as a gitignored servo-IK reference only.)*
 
 ---
 
@@ -420,8 +446,9 @@ PNGs land in the gitignored `outputs/`; these copies live in `docs/images/`).
   ~1 class out of it, and depending on the pkg drags WebXR/FastAPI baggage, so we
   **build our own `teleop_arkit`** and reuse only the Pinocchio servo-IK technique
   (B2). Franka model via **`example-robot-data`** (`load('panda')`, meshes
-  included); the grasp-TCP is added as a Pinocchio frame from `tcp_offset.yaml`,
-  so we don't depend on the URDF shipping `panda_hand_tcp`. teleop's command type
+  included); the grasp-TCP uses the URDF's built-in `panda_hand_tcp` frame directly
+  (≈ our measured `tcp_offset.yaml`, within ~6 mm — see §4.0; the YAML is a recorded
+  cross-check, not read at runtime). teleop's command type
   is `trajectory_msgs/JointTrajectory` on `/joint_trajectory` (not our
   `JointState` on `/joint_command`) — another reason to own the node. teleop kept
   as gitignored reference in `third_party/`.
@@ -434,5 +461,19 @@ PNGs land in the gitignored `outputs/`; these copies live in `docs/images/`).
   lag was the servo's 1/kp time-constant + timer quantization → fixed via
   event-driven publishing + higher `--kp-lin`/`--rate`. **Grasp slip fixed** with a
   high-friction physics material (μs=1.4) on cube + fingertips (`apply_grasp_friction`).
-  **iPhone now teleops a full pick-and-place into the bin.** Remaining: 6-DoF wrist
-  orientation (optional), and add Phases 4–5 to docs/HOWTO.md.
+  **iPhone now teleops a full pick-and-place into the bin.** (6-DoF wrist
+  orientation and the Phases 4–5 HOWTO write-up were both done shortly after.)
+- **2026-06-08** **Doc/cleanup pass + Phase 4.1 verified.**
+  `teleop_arkit/robot_state_pub.py` (`pixi run -e ros robot-model`) publishes the
+  Panda URDF on `/robot_description` + `/tf` (`package://` meshes rewritten to
+  `file://$CONDA_PREFIX/share/…`); rviz2 `RobotModel` renders the live Franka —
+  Phase 4.1 verified live. Removed the dead `third_party/tsf85/` (dropped tactile
+  plan). (The §6 end-to-end data-verification pass was completed next — see below.)
+- **2026-06-08** **Phase 6 §6 end-to-end verification done.** One 89 s rosbag of
+  the light topics (`/joint_states /target_frame /gripper_command /tf /clock`) over a
+  live iPhone pick-and-place confirms all four §6 checks at once: proprioception,
+  perception (cube visible at grasp via the wrist cam), pose-target tracking, and the
+  closed loop (target → IK → joints, max Δ 2.94 rad; gripper clean close+open). **Disk
+  lesson:** never `ros2 bag record` the raw image topics — uncompressed 1280×720 wrote
+  ~85 MiB/s and filled the disk; bag light topics + grab a couple of frames on the
+  gripper-close edge instead.

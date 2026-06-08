@@ -7,7 +7,7 @@
 # package), using its bundled Python. The install lives outside the repo and is
 # surfaced as the gitignored symlink `.isaac-sim` at the project root:
 #
-#     franka-arktit-teleop/.isaac-sim  ->  ~/isaac-sim/6.0.0
+#     franka-isaac-arkit-teleop/.isaac-sim  ->  ~/isaac-sim/6.0.0
 #
 # This wrapper runs OUTSIDE pixi on purpose: the binary's python.sh sets up its
 # own self-contained environment, so we don't want pixi's conda env layered on
