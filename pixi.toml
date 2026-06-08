@@ -1,0 +1,69 @@
+[workspace]
+channels = ["conda-forge"]
+name = "franka-arktit-teleop"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[system-requirements]
+libc = { family = "glibc", version = "2.35" }
+
+# ----------------------------------------------------------------------------
+# Run model (Phase 1): Isaac Sim runs from the downloaded 6.0 STANDALONE BINARY,
+# NOT from a pip `isaacsim` package. The binary bundles its own Python and every
+# extension; we invoke it via `scripts/run_isaac.sh` (which uses the gitignored
+# `.isaac-sim` symlink). So there is no `sim` pixi env / isaacsim pip pin here
+# anymore — that whole dependency tree (and its install gotchas) is gone.
+#
+# pixi hosts the ROS2 env (RoboStack Jazzy) in the `ros` environment below; the
+# default env stays lean and just shells out to the Isaac Sim binary.
+# ----------------------------------------------------------------------------
+
+[dependencies]
+python = "3.11.*"
+git = "*"
+pip = "*"
+
+[tasks]
+# Phase 1/2 — drive the Franka pick-and-place scene from the Isaac Sim binary.
+franka = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py"
+franka-headless = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py --headless"
+franka-ros = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py --ros"
+# Launch the Isaac Sim 6.0 GUI app.
+isaac-sim = "./scripts/run_isaac.sh --gui"
+
+# ----------------------------------------------------------------------------
+# Phase 3 — RoboStack ROS2 Jazzy env (tooling side: ros2 CLI, teleop, Pinocchio
+# later). Isolated from the default feature so ROS deps don't fight the lean env.
+# Matched to the Isaac bridge: FastDDS + ROS_DOMAIN_ID 0. They interoperate over
+# localhost DDS (see PROJECT.md §3). Use it with:  pixi shell -e ros
+# ----------------------------------------------------------------------------
+[feature.ros]
+channels = ["https://prefix.dev/robostack-jazzy", "conda-forge"]
+
+[feature.ros.dependencies]
+ros-jazzy-ros-base = "*"
+ros-jazzy-rmw-fastrtps-cpp = "*"
+ros-jazzy-rqt-image-view = "*"
+ros-jazzy-rviz2 = "*"
+# Phase 4 — our teleop adapter: Pinocchio servo-IK + a Pinocchio-ready Franka
+# Panda model (example-robot-data bundles panda.urdf + meshes). Both conda-forge.
+pinocchio = "*"
+example-robot-data = "*"
+
+[feature.ros.activation.env]
+ROS_DOMAIN_ID = "0"
+RMW_IMPLEMENTATION = "rmw_fastrtps_cpp"
+
+[feature.ros.tasks]
+ros-topics = "ros2 topic list"
+ros-joints = "ros2 topic echo --once /joint_states"
+# Phase 4 — our Pinocchio servo-IK node -> /joint_command (run Isaac --control ros first).
+ik-demo = "python -m teleop_arkit.joint_command_node"          # scripted, phone-free
+ik-topic = "python -m teleop_arkit.joint_command_node --source topic"  # follow /target_frame (Phase 5)
+# Phase 5 — iPhone/ARKit (ZIG SIM PRO) -> /target_frame.
+arkit = "python -m teleop_arkit.arkit_receiver"
+sniff = "python -m teleop_arkit.sniff_stream"
+robot-model = "python -m teleop_arkit.robot_state_pub"  # rviz2 RobotModel (Phase 4.1)
+
+[environments]
+ros = { features = ["ros"], no-default-feature = true }

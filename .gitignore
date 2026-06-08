@@ -1,0 +1,33 @@
+# pixi
+.pixi/
+# pixi.lock IS committed — it pins exact RoboStack/conda dep versions so a fresh
+# `pixi install` reproduces the same environment. (Add `pixi.lock` on its own line
+# above to ignore it instead — note: gitignore has no inline comments.)
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+env_isaacsim/
+
+# Third-party clones (cloned in WSL2 during Phase 4)
+third_party/
+
+# Outputs / logs / captures
+outputs/
+logs/
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local env overrides
+.env
+
+# Isaac Sim 6.0 standalone binary — installed per-machine outside the repo,
+# surfaced here as a gitignored symlink (see README "Run model").
+.isaac-sim

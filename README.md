@@ -1,0 +1,72 @@
+# Franka × iPhone-ARKit Teleop (Isaac Sim 6.0 · ROS2 PoC · Ubuntu)
+
+Teleoperate a **simulated Franka Emika Panda** in **NVIDIA Isaac Sim 6.0** by
+waving your **iPhone** — using **ARKit** for pose and **ROS2 + Pinocchio** for
+control. The task scene is a small **cube**, a small **bin**, and a
+**wrist-mounted camera**; you pick the cube and drop it in the bin from the
+phone. Built on [SpesRobotics/teleop](https://github.com/SpesRobotics/teleop).
+
+This is a **proof-of-concept** phase: no LeRobot, no learning, no tactile
+sensing. The goal is a working real-time teleop loop with all telemetry
+verified.
+
+- **New here? Follow [docs/HOWTO.md](docs/HOWTO.md)** — clone→install→run, step by
+  step (covers Phases 0–3).
+- Plan, decisions, and rationale: [PROJECT.md](PROJECT.md).
+
+## Platform
+Everything runs on **one native Ubuntu 26.04 machine** (dual-booted with
+Windows): Isaac Sim, ROS2 (RoboStack), teleop, and the ARKit receiver. The
+iPhone connects over WiFi. (We moved off Windows because its bleeding-edge GPU
+driver crashed Isaac Sim's RTX renderer — see PROJECT.md §2.)
+
+## Run model — the Isaac Sim 6.0 standalone binary
+We run Isaac Sim from the **downloaded 6.0 standalone binary** (not the
+`isaacsim` pip package). The install lives **outside the repo** and is surfaced
+as a gitignored symlink at the project root:
+
+```
+franka-arktit-teleop/.isaac-sim  ->  ~/isaac-sim/6.0.0
+```
+
+Everything launches through `scripts/run_isaac.sh`, which uses that symlink and
+the binary's bundled Python. **pixi** is reserved for the ROS2 env (RoboStack
+Jazzy + Pinocchio + teleop), added in Phase 3.
+
+If you move machines, just re-point the symlink at that machine's install:
+```bash
+ln -sfn ~/isaac-sim/6.0.0 .isaac-sim
+```
+
+## Quickstart — Phase 1 (Franka pick-and-place scene)
+
+```bash
+# 0. (once) Install pixi if needed, then open a new shell:
+#    curl -fsSL https://pixi.sh/install.sh | bash
+
+# 1. Sanity-check the driver and the .isaac-sim symlink:
+chmod +x scripts/setup_ubuntu.sh scripts/run_isaac.sh
+./scripts/setup_ubuntu.sh
+
+# 2. Run the Franka pick-and-place scene (GUI):
+pixi run franka
+#    or directly, bypassing pixi:
+#    ./scripts/run_isaac.sh isaac/load_franka_pickplace.py
+#    Hybrid-GPU laptop? Force the NVIDIA GPU:
+#    __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia pixi run franka
+```
+
+You should see the Franka pick the cube, drop it into the bin, and per-step
+joint positions + wrist-camera frame shapes printed. That confirms Phase 1.
+
+To open the full Isaac Sim GUI app instead: `pixi run isaac-sim`.
+
+## Requirements
+- Ubuntu 26.04 (Isaac Sim 6.0 officially validates 22.04/24.04 — see PROJECT.md §2).
+- NVIDIA GPU with driver **≥ 580.95.05**.
+- The Isaac Sim 6.0 standalone binary, symlinked as `.isaac-sim` (see above).
+- `pixi` (for the convenience tasks now, the ROS2 env later).
+
+## Status
+See the phase checklist in [PROJECT.md](PROJECT.md#5-phased-step-plan).
+Currently at **Phase 1**.
