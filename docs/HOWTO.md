@@ -267,20 +267,22 @@ cube is gripped, carried without slipping, and dropped in the bin.
 
 ## 7. Repo map (where things are)
 
-> The current, fuller file map + how it all connects is in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
-> The table below is the PoC subset (some Phase-7 modules now live under `teleop_arkit/{core,teleop,data,…}/`).
+> For how the code connects (diagrams) + an end-to-end runbook, see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+> Each `teleop_arkit/` sub-package and `isaac/` also carries its own `AGENTS.md` contract.
 
 | Path | What |
 |------|------|
 | `PROJECT.md` | The plan: phases, decisions, risks. |
 | `docs/HOWTO.md` | This guide. |
+| `docs/ARCHITECTURE.md` | Code flow + file connections (diagrams) + the full teleop→record→train→infer runbook. |
 | `isaac/franka_scene.py` | Sim library: constants, helpers, scene builders, ROS2 graph, grasp friction. |
 | `isaac/load_franka_pickplace.py` | Sim app entry: arg parsing, run loops, `main` (imports `franka_scene`). |
-| `teleop_arkit/ik.py` | Compact Pinocchio Cartesian servo-IK (our code). |
-| `teleop_arkit/joint_command_node.py` | ROS node: target → IK → `/joint_command` (+ gripper). |
-| `teleop_arkit/arkit_receiver.py` | ROS node: ZIG SIM ARKit+touch → `/target_frame` + `/gripper_command`. |
-| `teleop_arkit/robot_state_pub.py` | Publishes `/robot_description` + `/tf` for rviz2 `RobotModel` (`pixi run -e ros robot-model`). |
-| `teleop_arkit/sniff_stream.py` | UDP/TCP sniffer to inspect phone packets. |
+| `teleop_arkit/core/` | Shared contract imported everywhere: `robot.py` (joints/home), `schema.py` (.rrd entities + state/action vectors), `cameras.py`, `config.py` (pydantic), `rosutil.py`. |
+| `teleop_arkit/teleop/` | Live teleop nodes: `ik.py` (Pinocchio servo-IK), `joint_command_node.py` (target → IK → `/joint_command`), `arkit_receiver.py` (ZIG SIM → `/target_frame` + `/gripper_command`), `robot_state_pub.py` (rviz), `sniff_stream.py` (UDP sniffer). |
+| `teleop_arkit/data/` | Phase-7 data layer: `record.py` (demos → `.rrd`), `dataset.py` (`RrdDataset`), `stats.py`, `cache.py`. |
+| `teleop_arkit/policies/` | `act.py` — compact CVAE ACT baseline. |
+| `teleop_arkit/training/` | `train.py` — train/overfit → `act_min.pt`. |
+| `teleop_arkit/inference/` | `infer_node.py` — ckpt → `/joint_command` (closed-loop). |
 | `scripts/run_isaac.sh` | Launches the Isaac binary (sets EULA + ROS2 env). |
 | `scripts/setup_ubuntu.sh` | Driver / symlink / pixi sanity checks. |
 | `pixi.toml` | Default env (binary tasks) + `ros` env (RoboStack). |
@@ -338,16 +340,29 @@ rviz2 `RobotModel` (Phase 4.1) also works — run `pixi run -e ros robot-model`
 alongside Isaac, then add **RobotModel** (`/robot_description`) + **TF** with
 Fixed Frame `panda_link0`.
 
-### Phase 7 (in progress) — recording demos to Rerun `.rrd`
-With Isaac (`--control ros`) + `ik-topic` + `arkit` running (teleop working), record demos:
+### Phase 7 (in progress) — imitation learning over Rerun `.rrd`
+Record teleop demos → train a policy → let the policy drive the arm. The full step-by-step (with
+diagrams) is the runbook in **[ARCHITECTURE.md](ARCHITECTURE.md)** (§6); the short version:
+
+**Record** — with Isaac (`--control ros`) + `ik-topic` + `arkit` running (teleop working):
 ```bash
 pixi run -e ros record --view --task "pick the cube and place it in the bin"
 ```
 Per episode: **`s`** start (homes the arm + randomizes the cube, settles) → teleop the pick-place
 → **`e`** save SUCCESS / **`f`** save FAILURE / **`d`** discard. **`q`** quits; **`h`** reprints the
-key help. Episodes land in `~/rerun_episodes/episode_NNNNNN.rrd` + `.meta.json`. Full plan + the
-training side (steps 7.4+) live in `.claude/plans/now-lets-talk-about-moonlit-rivest.md`.
+key help. Episodes land in `~/rerun_episodes/episode_NNNNNN.rrd` + `.meta.json`.
 
-**Optional polish not yet done:** finer grip-force tuning. See
-[PROJECT.md](../PROJECT.md) for the
-full phase log and decisions.
+**Parse → normalize → train → infer** (all in the `ros` env):
+```bash
+pixi run -e ros eval-rrd     # read a .rrd back: shapes, alignment, decode rate
+pixi run -e ros stats        # normalization stats -> ~/rerun_episodes/stats.json
+pixi run -e ros cache        # (scale-prep) pre-decoded frame cache
+pixi run -e ros smoke-act    # 50-step data+model sanity check
+pixi run -e ros train        # train compact ACT -> ~/rerun_episodes/checkpoints/act_min.pt
+# then relaunch the sim (pixi run franka-teleop) + pixi run -e ros reset, and:
+pixi run -e ros infer        # closed-loop: ACT -> /joint_command
+```
+Decisions + full plan: [PROJECT.md](../PROJECT.md) and
+`.claude/plans/now-lets-talk-about-moonlit-rivest.md`.
+
+**Optional polish not yet done:** finer grip-force tuning.
