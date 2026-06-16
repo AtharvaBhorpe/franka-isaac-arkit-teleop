@@ -19,6 +19,13 @@ outputs/
 logs/
 *.log
 
+# Phase 7 IL data — datasets + checkpoints live OUTSIDE the repo (~/rerun_episodes);
+# ignore any that land in-repo so large .rrd / model files never get committed.
+*.rrd
+*.pt
+rerun_episodes/
+checkpoints/
+
 # OS / IDE
 .DS_Store
 Thumbs.db

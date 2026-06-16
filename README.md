@@ -14,6 +14,8 @@ verified.
 
 - **New here? Follow [docs/HOWTO.md](docs/HOWTO.md)** — clone→install→run, step by
   step (covers Phases 0–6).
+- **Lost in the files?** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — what each file does, how
+  they connect (diagrams), and an end-to-end runbook (teleop → record → train → infer).
 - Plan, decisions, and rationale: [PROJECT.md](PROJECT.md).
 
 ## Platform

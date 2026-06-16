@@ -13,8 +13,8 @@ Target source (--source):
     the ARKit receiver feeds in Phase 5.
 
 Run (with Isaac up in --control ros, in another terminal):
-    pixi run -e ros python -m teleop_arkit.joint_command_node            # demo
-    pixi run -e ros python -m teleop_arkit.joint_command_node --source topic
+    pixi run -e ros python -m teleop_arkit.teleop.joint_command_node            # demo
+    pixi run -e ros python -m teleop_arkit.teleop.joint_command_node --source topic
 """
 
 from __future__ import annotations
@@ -27,13 +27,11 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float64
+from std_msgs.msg import Empty, Float64
 
-from teleop_arkit.ik import CartesianServoIK, _default_panda_urdf
-
-ARM_JOINTS = [f"panda_joint{i}" for i in range(1, 8)]
-FINGER_JOINTS = ["panda_finger_joint1", "panda_finger_joint2"]
-GRIPPER_OPEN, GRIPPER_CLOSED = 0.04, 0.0
+from teleop_arkit.core.robot import (ARM_JOINTS, FINGER_JOINTS, GRIPPER_CLOSED,
+                                     GRIPPER_OPEN, HOME_ARM_Q, default_panda_urdf)
+from teleop_arkit.teleop.ik import CartesianServoIK
 
 
 class JointCommandNode(Node):
@@ -56,6 +54,11 @@ class JointCommandNode(Node):
         self.target: pin.SE3 | None = None
         self.gripper = GRIPPER_OPEN
 
+        # On /episode/reset we authoritatively command HOME for a short window so the
+        # ArticulationController's latched (pre-reset) target can't drag the arm back.
+        self._reset_home_secs = args.reset_home_secs
+        self._home_ticks = 0
+
         # Demo state.
         self._demo_targets: list[pin.SE3] = []
         self._demo_grips: list[float] = []
@@ -65,6 +68,9 @@ class JointCommandNode(Node):
         if self.source == "topic":
             self.create_subscription(PoseStamped, args.target_topic, self._on_target, 1)
             self.create_subscription(Float64, args.gripper_topic, self._on_gripper, 1)
+        # Episode reset (data collection): re-seed from /joint_states so we don't drag the
+        # arm back to a stale target after Isaac homes it.
+        self.create_subscription(Empty, args.reset_topic, self._on_reset, 1)
         self.cmd_pub = self.create_publisher(JointState, args.command_topic, 1)
         self.create_timer(self.dt, self._tick)
         self.get_logger().info(
@@ -72,7 +78,7 @@ class JointCommandNode(Node):
 
     # -- inputs ------------------------------------------------------------
     def _on_joint_states(self, msg: JointState):
-        if self.seeded:
+        if self.seeded or self._home_ticks > 0:  # don't re-seed mid-homing
             return
         q = self.ik.q.copy()
         for name, pos in zip(msg.name, msg.position):
@@ -93,6 +99,14 @@ class JointCommandNode(Node):
     def _on_gripper(self, msg: Float64):
         self.gripper = float(msg.data)
 
+    def _on_reset(self, _msg: Empty):
+        # Drive the arm to HOME for a brief window (overwrites the controller's stale
+        # latched target so it can't drag the arm back), then re-seed from /joint_states.
+        self.seeded = False
+        self.target = None
+        self._home_ticks = max(1, int(self._reset_home_secs / self.dt))
+        self.get_logger().info("episode reset: homing arm, then re-seeding from /joint_states")
+
     # -- demo target generation -------------------------------------------
     def _build_demo(self, start: pin.SE3):
         # Keep the (downward) orientation; sweep position + toggle the gripper:
@@ -104,7 +118,21 @@ class JointCommandNode(Node):
         self._demo_i = 0
 
     # -- control tick ------------------------------------------------------
+    def _publish_arm(self, arm_q, grip):
+        js = JointState()
+        js.header.stamp = self.get_clock().now().to_msg()
+        js.name = ARM_JOINTS + FINGER_JOINTS
+        js.position = list(arm_q) + [grip, grip]
+        self.cmd_pub.publish(js)
+
     def _tick(self):
+        # Reset homing window: command HOME (open gripper) so the controller's latched
+        # target is overwritten and the arm actually returns home before we re-seed.
+        if self._home_ticks > 0:
+            self._publish_arm(HOME_ARM_Q, GRIPPER_OPEN)
+            self._home_ticks -= 1
+            return
+
         if not self.seeded or self.target is None:
             return
 
@@ -118,11 +146,7 @@ class JointCommandNode(Node):
             self._demo_i = (self._demo_i + 1) % len(self._demo_targets)
             self.get_logger().info(f"reached demo pose; -> next [{self._demo_i}]")
 
-        js = JointState()
-        js.header.stamp = self.get_clock().now().to_msg()
-        js.name = ARM_JOINTS + FINGER_JOINTS
-        js.position = list(self.ik.arm_q()) + [self.gripper, self.gripper]
-        self.cmd_pub.publish(js)
+        self._publish_arm(self.ik.arm_q(), self.gripper)
 
 
 def main():
@@ -134,24 +158,21 @@ def main():
     p.add_argument("--kp-ang", type=float, default=4.0, help="EE angular tracking gain.")
     p.add_argument("--max-lin-vel", type=float, default=0.6, help="EE linear speed cap (m/s).")
     p.add_argument("--max-ang-vel", type=float, default=1.5, help="EE angular speed cap (rad/s).")
+    p.add_argument("--reset-home-secs", type=float, default=1.0,
+                   help="On /episode/reset, command HOME for this long (s) before re-seeding.")
     p.add_argument("--source", choices=["demo", "topic"], default="demo")
     p.add_argument("--joint-state-topic", default="/joint_states")
     p.add_argument("--command-topic", default="/joint_command")
     p.add_argument("--target-topic", default="/target_frame")
     p.add_argument("--gripper-topic", default="/gripper_command")
+    p.add_argument("--reset-topic", default="/episode/reset")
     args, _ = p.parse_known_args()
     if args.urdf is None:
-        args.urdf = _default_panda_urdf()
+        args.urdf = default_panda_urdf()
 
+    from teleop_arkit.core.rosutil import run
     rclpy.init()
-    node = JointCommandNode(args)
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    run(JointCommandNode(args))                                # spin + clean teardown (Ctrl-C / SIGTERM)
 
 
 if __name__ == "__main__":

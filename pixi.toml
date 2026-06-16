@@ -19,7 +19,7 @@ libc = { family = "glibc", version = "2.35" }
 # ----------------------------------------------------------------------------
 
 [dependencies]
-python = "3.11.*"
+python = "3.12.*"
 git = "*"
 pip = "*"
 
@@ -28,6 +28,11 @@ pip = "*"
 franka = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py"
 franka-headless = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py --headless"
 franka-ros = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py --ros"
+# Phase 5/7 — ROS-driven arm: follows /joint_command + listens on /episode/reset.
+# THIS is the launch for teleop recording AND closed-loop policy inference.
+franka-teleop = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py --control ros"
+# Headless (no Isaac GUI) — teleop by watching the cameras in the Rerun viewer (record --view).
+franka-teleop-headless = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py --control ros --headless"
 # Launch the Isaac Sim 6.0 GUI app.
 isaac-sim = "./scripts/run_isaac.sh --gui"
 
@@ -50,6 +55,15 @@ ros-jazzy-rviz2 = "*"
 pinocchio = "*"
 example-robot-data = "*"
 
+# Phase 7 — Rerun .rrd (record + read/query via [catalog]) AND torch, layered on top of the
+# RoboStack conda solve. Safe here: pixi's pypi resolver is conda-aware (won't re-solve the
+# conda packages), and conda numpy 2.4.x already satisfies torch+pyarrow (no ABI clobber).
+# This unifies record + read + train + infer in ONE env (cv2/numpy come from conda).
+[feature.ros.pypi-dependencies]
+rerun-sdk = { version = "==0.33.0", extras = ["catalog"] }
+torch = "*"
+pydantic = ">=2.13.4, <3"
+
 [feature.ros.activation.env]
 ROS_DOMAIN_ID = "0"
 RMW_IMPLEMENTATION = "rmw_fastrtps_cpp"
@@ -58,12 +72,31 @@ RMW_IMPLEMENTATION = "rmw_fastrtps_cpp"
 ros-topics = "ros2 topic list"
 ros-joints = "ros2 topic echo --once /joint_states"
 # Phase 4 — our Pinocchio servo-IK node -> /joint_command (run Isaac --control ros first).
-ik-demo = "python -m teleop_arkit.joint_command_node"          # scripted, phone-free
-ik-topic = "python -m teleop_arkit.joint_command_node --source topic"  # follow /target_frame (Phase 5)
+ik-demo = "python -m teleop_arkit.teleop.joint_command_node"          # scripted, phone-free
+ik-topic = "python -m teleop_arkit.teleop.joint_command_node --source topic"  # follow /target_frame (Phase 5)
 # Phase 5 — iPhone/ARKit (ZIG SIM PRO) -> /target_frame.
-arkit = "python -m teleop_arkit.arkit_receiver"
-sniff = "python -m teleop_arkit.sniff_stream"
-robot-model = "python -m teleop_arkit.robot_state_pub"  # rviz2 RobotModel (Phase 4.1)
+arkit = "python -m teleop_arkit.teleop.arkit_receiver"
+sniff = "python -m teleop_arkit.teleop.sniff_stream"
+robot-model = "python -m teleop_arkit.teleop.robot_state_pub"  # rviz2 RobotModel (Phase 4.1)
+# Phase 7 — record teleop demos to Rerun .rrd; cam-hz measures camera rate before a campaign.
+record = "python -m teleop_arkit.data.record"
+cam-hz = "ros2 topic hz /wrist_cam/image_raw"
+# Re-home the arm + randomize the cube; publishes 5x (a single /episode/reset is DDS-dropped).
+# Use before recording an episode and before a closed-loop `infer` run.
+reset = 'ros2 topic pub --times 5 --rate 10 /episode/reset std_msgs/msg/Empty "{}"'
+# Phase 7 (read / train / infer) — same env now (torch + rerun[catalog] are pypi-deps above).
+eval-rrd = "python -m teleop_arkit.data.dataset"   # read a .rrd back; verify alignment + chunking
+stats = "python -m teleop_arkit.data.stats"    # write stats.json over the dataset
+cache = "python -m teleop_arkit.data.cache"   # build the train-ready frame cache (run after recording)
+smoke-act = "python -m teleop_arkit.training.train --steps 50 --max-episodes 1"   # 50-step model+data sanity
+train = "python -m teleop_arkit.training.train"            # train/overfit the compact ACT (--max-episodes N)
+infer = "python -m teleop_arkit.inference.infer_node"       # ACT policy -> /joint_command (closed-loop in sim)
 
 [environments]
+# ONE runtime env for all of Phase 7 — record + read + train + infer — built on RoboStack
+# ROS2 Jazzy (rclpy/cv2/pinocchio, py3.12) with torch + rerun[catalog] layered on as pypi-deps
+# (see [feature.ros.pypi-dependencies]). The earlier separate `train` env was merged in: conda
+# numpy 2.4.x satisfies torch+pyarrow, so they coexist with no ABI clobber — one torch, no
+# duplication, and infer_node gets rclpy + torch in the same process. `default` stays lean
+# (just shells out to the Isaac Sim binary).
 ros = { features = ["ros"], no-default-feature = true }

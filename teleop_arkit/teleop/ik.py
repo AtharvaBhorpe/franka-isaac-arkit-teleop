@@ -10,14 +10,14 @@ implementation of the technique used in SpesRobotics/teleop's JacobiRobot
 (Apache-2.0) — we reuse the approach, not the code.
 
 Self-test (no ROS / no Isaac needed), run inside the `ros` env:
-    pixi run -e ros python -m teleop_arkit.ik
+    pixi run -e ros python -m teleop_arkit.teleop.ik
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pinocchio as pin
-
+from teleop_arkit.core.robot import default_panda_urdf
 
 def _clamp_norm(v: np.ndarray, max_norm: float) -> np.ndarray:
     """Scale `v` down so its norm <= max_norm (direction preserved)."""
@@ -129,19 +129,9 @@ class CartesianServoIK:
         return np.linalg.norm(lin_err) < self.lin_tol and np.linalg.norm(ang_err) < self.ang_tol
 
 
-def _default_panda_urdf() -> str:
-    """Path to the example-robot-data Panda URDF inside the active conda env."""
-    import os
-
-    return os.path.join(
-        os.environ["CONDA_PREFIX"],
-        "share/example-robot-data/robots/panda_description/urdf/panda.urdf",
-    )
-
-
 if __name__ == "__main__":
     # Standalone convergence test: seed a pose, command a +x/+z offset, servo.
-    ik = CartesianServoIK(_default_panda_urdf())
+    ik = CartesianServoIK(default_panda_urdf())
     # A reasonable arm config (Isaac default) + open fingers.
     ik.set_q(np.array([0.012, -0.57, 0.0, -2.81, 0.0, 3.04, 0.74, 0.04, 0.04]))
 

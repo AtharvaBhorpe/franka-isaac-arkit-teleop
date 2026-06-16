@@ -5,9 +5,9 @@ parser (arkit_receiver.py), so we match the wire format exactly instead of
 guessing. No deps beyond the stdlib.
 
 Usage (run on the Ubuntu machine; point ZIG SIM at this host's IP + port):
-    python3 -m teleop_arkit.sniff_stream                 # UDP on :50000
-    python3 -m teleop_arkit.sniff_stream --port 50000
-    python3 -m teleop_arkit.sniff_stream --proto tcp     # if ZIG SIM uses TCP
+    python3 -m teleop_arkit.teleop.sniff_stream                 # UDP on :50000
+    python3 -m teleop_arkit.teleop.sniff_stream --port 50000
+    python3 -m teleop_arkit.teleop.sniff_stream --proto tcp     # if ZIG SIM uses TCP
 
 In ZIG SIM: choose protocol UDP (or TCP), data format JSON, set the destination
 to this machine's IP and the same port, enable ARKit, and Start.

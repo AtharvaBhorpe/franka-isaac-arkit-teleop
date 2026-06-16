@@ -333,6 +333,15 @@ PNGs land in the gitignored `outputs/`; these copies live in `docs/images/`).
 
 ![Phase 6 scene camera, grasp](docs/images/phase6_scene_cam_grasp.png)
 
+### Phase 7 — Imitation-learning data collection (Rerun `.rrd`) → custom VLA  ◀ IN PROGRESS
+Full plan + locked decisions: `.claude/plans/now-lets-talk-about-moonlit-rivest.md`.
+- [x] **7.1** Per-episode reset + cube randomization (`/episode/reset`); IK homes (`HOME_ARM_Q`) then re-seeds.
+- [x] **7.2** `rerun-sdk==0.33.0` in the `ros` env (record side).
+- [x] **7.3** `teleop_arkit/record_rrd.py` — per-episode `.rrd` recorder (keys + `/record/command`, `--view`). 3 success demos in `~/rerun_episodes/`.
+- [x] **7.4** `rrd_dataset.py` + `compute_stats.py` — read `.rrd` via the 0.33 **chunk API** (`RrdReader().store().stream().to_chunks()`), latest-at align on `log_time`, action-chunk, JPEG decode. Verified (740 samples, decode 379/s). *(torch + `rerun[catalog]` merged into the `ros` env — no separate `train` env.)*
+- [~] **7.5** Compact ACT (`models/act_min.py`, 11.6 M) + `train.py` **DONE** → overfit one episode drove L1 0.57→0.066 (**data validated**); `infer_node.py` + closed-loop next.
+- [ ] **7.6** Scale demos; then the Gemma-based VLA (`models/gemma_vla.py`) on bigger hardware.
+
 ---
 
 ## 6. "Getting the data correctly" — verification checklist
@@ -477,3 +486,63 @@ PNGs land in the gitignored `outputs/`; these copies live in `docs/images/`).
   lesson:** never `ros2 bag record` the raw image topics — uncompressed 1280×720 wrote
   ~85 MiB/s and filled the disk; bag light topics + grab a couple of frames on the
   gripper-close edge instead.
+- **2026-06-08/09** **Phase 7 started — IL data collection to Rerun `.rrd`.** Pivoted from a
+  LeRobot plan to a custom, `.rrd`-native pipeline (pin `rerun-sdk==0.33.0`); full rationale +
+  locked decisions in `.claude/plans/now-lets-talk-about-moonlit-rivest.md` and `AGENTS.md`.
+  **Done:** (1) per-episode reset + cube randomization via `/episode/reset` (Isaac rclpy
+  `ResetListener` + `franka_scene.randomize_cube_pose`); the IK node commands `HOME_ARM_Q` for
+  ~1 s on reset to beat the ArticulationController's latched target, then re-seeds — homes
+  reliably. (2) `rerun-sdk` added to the `ros` env. (3) `teleop_arkit/record_rrd.py` recorder
+  (per-episode `.rrd`+meta, keys `s/e/f/d/q/h` + `/record/command`, `--view`); recorded 3 success
+  demos in `~/rerun_episodes/`. **Gotchas:** a single `/episode/reset` (Empty) is dropped by a
+  DDS discovery race — publish 2–3× (this, not IK tuning, caused the home↔away flakiness);
+  episodes are large (1280×720 scene-cam JPEG ≈ 80%; disk ~92% full — lower `--jpeg-quality`/
+  resize before scaling); cameras ~18 Hz idle.
+- **2026-06-09** **Phase 7 steps 4–5 + env merge.** `rrd_dataset.py` + `compute_stats.py` read `.rrd`
+  via the **0.33 chunk API** (`rerun.experimental.RrdReader().store().stream().to_chunks()`; there is
+  no `rerun.dataframe`, and no high-level local `fill_latest_at` — we do **latest-at on `log_time`**
+  ourselves, since `/joint_command`+`/target_frame` are wall-stamped by our ROS nodes while Isaac
+  sim-stamps the rest, so `sim_time` was mixed-axis; recorder now logs all on `self.sim_t`). Verified
+  on a real demo (740 samples, decode 379 samples/s); `stats.json` confirms motion (joint std 0.2–0.84).
+  `models/act_min.py` (compact ACT, 11.6 M) + `train.py`: **overfitting one episode drove L1 0.57→0.066
+  ⇒ data validated.** **Env merge:** dropped the separate `train` env — folded `torch 2.10+cu128`
+  (Blackwell/RTX-5060-ready, cuda ✓) + `rerun-sdk[catalog]` into **`ros`** (py3.12); conda numpy 2.4.6
+  satisfies torch+pyarrow (no ABI clobber), one torch, ~7 GB freed. **Next:** `infer_node.py` → closed-loop.
+- **2026-06-11** **Modularity & Code Structure improvements.** Centralized URDF path resolution helper `default_panda_urdf()` from `teleop/ik.py` to `core/robot.py` to keep the robot specs unified. Cleaned up imports in `arkit_receiver.py` to decouple it from execution nodes. Extracted image preprocessing logic into `preprocess_image()` in `core/cameras.py` to ensure exact vision pipeline parity (resize, transpose, color-space mapping) between `dataset.py` (training) and `infer_node.py` (inference).
+- **2026-06-13** **Code-structure refactor finished + shutdown hardening + Python unification.**
+  Completed the PART C refactor: **C2 stage-split** — the flat `teleop_arkit/` is now sub-packages
+  `core/ teleop/ data/ policies/ training/ inference/` (pixi task *names* unchanged, only module
+  paths); **C3 pydantic configs** — `core/config.py` holds `EpisodeMeta`/`ModelConfig`/`DatasetStats`
+  (validate-on-read catches train→infer contract drift). **SIGTERM hardening:** the 4 ROS nodes
+  emitted a low-level `RCLError: context is not valid` on SIGTERM (kill/`timeout`/launch teardown)
+  because rclpy invalidates the context mid-spin — it escaped `except (KeyboardInterrupt,
+  ExternalShutdownException)`. Fixed via `core/rosutil.py` (`spin`/`run` swallow the shutdown-race
+  `RCLError` but re-raise while `rclpy.ok()`, so real errors aren't hidden); wired into
+  joint_command/arkit/infer (`run`) + record (`spin` + custom finally). Ctrl-C was always clean
+  (SIGINT = KeyboardInterrupt). **Python 3.12 unification:** the `ros` env was already 3.12.13; the
+  `default` env was the sole 3.11 pin (`pixi.toml [dependencies] python`). Bumped to `3.12.*` +
+  `pixi install` re-solved `default` (didn't touch `ros`) → both envs now report **3.12.13**, no
+  stray `3.11` refs. (The Isaac binary's own bundled Python is separate, unaffected.) All Phase-7
+  code remains **uncommitted** on disk.
+- **2026-06-13** **AGENTS.md migration + DOX doc tree.** Moved the project guide from `CLAUDE.md` to
+  **`AGENTS.md`** (cross-tool open standard); `CLAUDE.md` is now a one-line `@AGENTS.md` shim, because
+  Claude Code (v2.1.175) auto-loads only `CLAUDE.md`, not `AGENTS.md` — a bare rename would silently
+  break auto-load. Adopted the **DOX framework** (a hierarchy of per-directory `AGENTS.md` "contract"
+  docs) and built the tree: root + `teleop_arkit/` + `core/`/`data/`/`teleop/`/`policies/` + `isaac/`
+  (7 docs; thin leaves `training/`+`inference/` parent-owned). **Doc-model decision (resolves the
+  DOX-vs-PROJECT.md tension):** PROJECT.md stays the **diary/history** (keeps superseded ideas; DOX's
+  "no diary" rule does NOT apply here); the `AGENTS.md` tree carries only **current** scope/contracts;
+  the obs/action **machine contract is code** (`core/schema.py`, `core/robot.py`) — docs cite, never
+  restate. Scope-local rules were pushed down from the root into their child doc (broad-in-parent +
+  detail-in-child). Child `AGENTS.md` are honored **behaviorally** (the root's "Read Before Editing"
+  rule), since Claude Code won't auto-surface nested `AGENTS.md`. All uncommitted on disk.
+- **2026-06-13** **`docs/ARCHITECTURE.md` — code-flow + runbook doc.** Added a project-wide map: the
+  two-runtime split (Isaac binary Python vs pixi `ros` env, coupled only over DDS topics), Mermaid
+  diagrams for the teleop loop / IL pipeline / `core/` import graph / ROS2 topic graph, the `.rrd`
+  entity contract, an end-to-end runbook (load sim → IK → ARKit → visualize in Rerun → record →
+  parse/normalize → train → infer) mapped to the exact pixi tasks, and sequence diagrams. Linked from
+  README + root `AGENTS.md` repo-map + HOWTO. Fixed two stale post-refactor paths in HOWTO
+  (`teleop_arkit.joint_command_node`→`teleop_arkit.teleop.…`). Chose Mermaid over Excalidraw (renders
+  inline, diffs, stays current); no maintenance skill added — kept under the existing DOX doc-update
+  rule. Uncommitted on disk.
+

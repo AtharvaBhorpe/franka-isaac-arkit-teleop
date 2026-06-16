@@ -21,7 +21,7 @@ is a later refinement. Motion is relative to the robot's live EE + the phone pos
 captured at each clutch engage.
 
 Run (with Isaac --control ros and `ik-topic` both up):
-    pixi run -e ros python -m teleop_arkit.arkit_receiver --scale 1.5
+    pixi run -e ros python -m teleop_arkit.teleop.arkit_receiver --scale 1.5
 """
 
 from __future__ import annotations
@@ -39,10 +39,10 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64
 
-from teleop_arkit.ik import CartesianServoIK, _default_panda_urdf
-from teleop_arkit.joint_command_node import (
-    ARM_JOINTS, FINGER_JOINTS, GRIPPER_OPEN, GRIPPER_CLOSED,
+from teleop_arkit.core.robot import (
+    ARM_JOINTS, FINGER_JOINTS, GRIPPER_OPEN, GRIPPER_CLOSED, default_panda_urdf
 )
+from teleop_arkit.teleop.ik import CartesianServoIK
 
 # ARKit world (RH, +Y up, camera looks -Z) -> robot base (+Z up, +X fwd, +Y left):
 # phone up -> +Z, phone forward(-Z) -> +X, phone left(-X) -> +Y. Flip a row's sign
@@ -187,17 +187,11 @@ def main():
     p.add_argument("--frame-id", default="world")
     args, _ = p.parse_known_args()
     if args.urdf is None:
-        args.urdf = _default_panda_urdf()
+        args.urdf = default_panda_urdf()
 
+    from teleop_arkit.core.rosutil import run
     rclpy.init()
-    node = ARKitReceiver(args)
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    run(ARKitReceiver(args))                                   # spin + clean teardown (Ctrl-C / SIGTERM)
 
 
 if __name__ == "__main__":

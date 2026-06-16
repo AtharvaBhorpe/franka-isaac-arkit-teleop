@@ -19,12 +19,12 @@ import os
 import subprocess
 import tempfile
 
-from teleop_arkit.ik import _default_panda_urdf
+from teleop_arkit.core.robot import default_panda_urdf
 
 
 def main():
     share = os.path.join(os.environ["CONDA_PREFIX"], "share")
-    urdf = open(_default_panda_urdf()).read().replace("package://", f"file://{share}/")
+    urdf = open(default_panda_urdf()).read().replace("package://", f"file://{share}/")
 
     # Pass the URDF via a YAML params file (block scalar handles the multi-line XML
     # safely — inline `-p robot_description:=<xml>` would be YAML-mangled).

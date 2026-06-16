@@ -43,21 +43,70 @@ import franka_scene as fs  # noqa: E402  (sibling module; safe — no isaacsim a
 # run loops (post-boot)
 # ============================================================================
 
+def _make_reset_listener():
+    """Tiny rclpy node that flags when std_msgs/Empty arrives on /episode/reset.
+
+    Isaac's bundled Python ships rclpy (cf. standalone_examples/.../ros2.bridge/subscriber.py),
+    so we can react to a ROS topic with custom Python here, alongside the OmniGraph bridge.
+    Returns (rclpy_module, node), or (None, None) if rclpy can't be set up — in which case the
+    sim still runs and only /episode/reset is disabled.
+    """
+    try:
+        import rclpy
+        from rclpy.node import Node
+        from std_msgs.msg import Empty
+
+        if not rclpy.ok():
+            rclpy.init()
+
+        class _ResetListener(Node):
+            def __init__(self):
+                super().__init__("episode_reset_listener")
+                self._flag = False
+                self.create_subscription(Empty, "/episode/reset", self._on, 1)
+
+            def _on(self, _msg):
+                self._flag = True
+
+            def pop(self) -> bool:
+                f, self._flag = self._flag, False
+                return f
+
+        return rclpy, _ResetListener()
+    except Exception as exc:  # never let reset wiring crash the sim
+        print(f"[franka] WARN: /episode/reset disabled (rclpy unavailable): {exc}")
+        return None, None
+
+
 def run_ros_controlled(sim_app, pick_place) -> int:
-    """--control ros: the arm follows /joint_command; we just step + report."""
+    """--control ros: the arm follows /joint_command; we just step + report.
+
+    Also listens on /episode/reset (std_msgs/Empty): each request homes the arm and
+    respawns the cube at a random spot (fs.randomize_cube_pose) for episode-by-episode
+    data collection. The IK node re-seeds off the same topic so it won't fight the reset.
+    """
     from isaacsim.core.simulation_manager import SimulationManager
 
-    pick_place.reset()  # sane initial pose, then ROS takes over
-    print("[franka] ROS-controlled: arm follows /joint_command "
-          "(publish sensor_msgs/JointState). Ctrl-C / close to stop.")
+    fs.randomize_cube_pose(pick_place)  # clean, randomized start
+    rclpy, reset_node = _make_reset_listener()
+    print("[franka] ROS-controlled: arm follows /joint_command (sensor_msgs/JointState). "
+          "Publish std_msgs/Empty on /episode/reset to home+respawn. Ctrl-C / close to stop.")
     step = 0
     while sim_app.is_running():
+        if reset_node is not None:
+            rclpy.spin_once(reset_node, timeout_sec=0.0)
+            if reset_node.pop():
+                fs.randomize_cube_pose(pick_place)
+                for _ in range(10):  # let physics settle before logging resumes
+                    sim_app.update()
         if SimulationManager.is_simulating():
             if step % 120 == 0:
                 q = pick_place.robot.get_dof_positions().numpy()[0]
                 print(f"[franka] (ros) step {step:6d}  q={np.round(q, 3).tolist()}")
             step += 1
         sim_app.update()
+    if reset_node is not None:
+        reset_node.destroy_node()
     return 0
 
 

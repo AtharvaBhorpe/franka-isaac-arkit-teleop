@@ -42,6 +42,11 @@ BIN_PATH = "/World/Bin"
 WRIST_CAM_PATH = ROBOT_PATH + "/panda_hand/wrist_cam"  # child of the hand -> tracks it
 SCENE_CAM_PATH = "/World/scene_cam"
 
+# Episode-reset cube spawn randomization (Phase 7): a small table box around the
+# FrankaPickPlace default cube spawn (~0.5, 0.0), kept clear of the bin at (0, 0.5).
+# Bin position stays fixed until after ACT validation.
+CUBE_SPAWN_REGION = {"x": (0.42, 0.58), "y": (-0.12, 0.12)}
+
 # Grasp stability: bind a high-friction physics material to the cube + fingertips
 # so a pinch grip actually holds (the default material is too slippery), and raise
 # the finger drive's force ceiling so it squeezes firmly.
@@ -459,3 +464,24 @@ def log_camera_aim(named_prims):
         pos = l2w.ExtractTranslation()
         print(f"[franka] {label} cam world pos={tuple(round(v, 3) for v in pos)} "
               f"optical_axis={tuple(round(v, 2) for v in optical)}")
+
+
+def randomize_cube_pose(pick_place, region=CUBE_SPAWN_REGION):
+    """Episode reset: home the arm (+ open gripper) and respawn the cube at a random
+    (x, y) in `region` (z = its initial height), with zero velocity. Bin stays fixed.
+
+    Reuses NVIDIA's FrankaPickPlace.reset(cube_position=...) (homes the robot via
+    reset_to_default_pose + places the cube), then zeros the cube's velocity so it can't
+    carry momentum from being mid-carry or resting in the bin. Returns the chosen (x, y, z).
+    """
+    z = float(pick_place.cube_initial_position[2])
+    x = float(np.random.uniform(*region["x"]))
+    y = float(np.random.uniform(*region["y"]))
+    pos = np.array([x, y, z], dtype=float)
+    pick_place.reset(cube_position=pos)  # home arm + open gripper + place cube
+    try:
+        pick_place.cube.set_velocities(np.zeros((1, 3)), np.zeros((1, 3)))
+    except Exception as exc:  # backend may not support it this frame — non-fatal
+        print(f"[franka] WARN: could not zero cube velocity: {exc}")
+    print(f"[franka] episode reset: cube spawned at ({x:.3f}, {y:.3f}), arm homed")
+    return pos

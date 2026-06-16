@@ -6,7 +6,8 @@ top to bottom. Each phase ends with a **✓ Check** so you know it worked.
 > **Covered: the full PoC (Phases 0–6)** — Isaac Sim scene + cameras + ROS2 bridge
 > + RoboStack interop + Pinocchio IK + **6-DoF iPhone/ARKit teleoperation**.
 >
-> Background & rationale for every decision live in [PROJECT.md](../PROJECT.md).
+> Background & rationale for every decision live in [PROJECT.md](../PROJECT.md). For **how the code
+> connects** (diagrams) + a full teleop→record→train→infer runbook, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -216,7 +217,7 @@ pixi install -e ros
 ```
 ✓ **Check** — the IK solver works standalone (no ROS/Isaac needed):
 ```bash
-pixi run -e ros python -m teleop_arkit.ik     # prints "reached in N steps", sub-mm error
+pixi run -e ros python -m teleop_arkit.teleop.ik     # prints "reached in N steps", sub-mm error
 ```
 
 ### 6b. iPhone app — ZIG SIM PRO
@@ -256,15 +257,18 @@ cube is gripped, carried without slipping, and dropped in the bin.
 ### 6e. Tuning knobs
 - **Translation gain:** `arkit --scale 1.5`.
 - **Latency / snappiness** (lag ≈ `1/kp_lin`): run the IK node with overrides,
-  e.g. `pixi run -e ros python -m teleop_arkit.joint_command_node --source topic --rate 120 --kp-lin 6`.
+  e.g. `pixi run -e ros python -m teleop_arkit.teleop.joint_command_node --source topic --rate 120 --kp-lin 6`.
 - **Orientation:** `arkit --no-orient` (downward-only) or `--quat-order wxyz` if
   rotations look mirrored.
-- **Axis flipped?** edit `ARKIT_TO_ROS` in `teleop_arkit/arkit_receiver.py` (flip a row's sign).
+- **Axis flipped?** edit `ARKIT_TO_ROS` in `teleop_arkit/teleop/arkit_receiver.py` (flip a row's sign).
 - **Grasp slips?** raise friction in `apply_grasp_friction` (`isaac/franka_scene.py`, μs/μd).
 
 ---
 
 ## 7. Repo map (where things are)
+
+> The current, fuller file map + how it all connects is in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+> The table below is the PoC subset (some Phase-7 modules now live under `teleop_arkit/{core,teleop,data,…}/`).
 
 | Path | What |
 |------|------|
@@ -333,6 +337,16 @@ you teleop a complete cube→bin pick-and-place from the phone.
 rviz2 `RobotModel` (Phase 4.1) also works — run `pixi run -e ros robot-model`
 alongside Isaac, then add **RobotModel** (`/robot_description`) + **TF** with
 Fixed Frame `panda_link0`.
+
+### Phase 7 (in progress) — recording demos to Rerun `.rrd`
+With Isaac (`--control ros`) + `ik-topic` + `arkit` running (teleop working), record demos:
+```bash
+pixi run -e ros record --view --task "pick the cube and place it in the bin"
+```
+Per episode: **`s`** start (homes the arm + randomizes the cube, settles) → teleop the pick-place
+→ **`e`** save SUCCESS / **`f`** save FAILURE / **`d`** discard. **`q`** quits; **`h`** reprints the
+key help. Episodes land in `~/rerun_episodes/episode_NNNNNN.rrd` + `.meta.json`. Full plan + the
+training side (steps 7.4+) live in `.claude/plans/now-lets-talk-about-moonlit-rivest.md`.
 
 **Optional polish not yet done:** finer grip-force tuning. See
 [PROJECT.md](../PROJECT.md) for the
