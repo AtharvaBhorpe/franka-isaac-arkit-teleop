@@ -1,6 +1,6 @@
 """ARKit receiver — ZIG SIM PRO iPhone pose + touch -> teleop (Phase 5).
 
-Listens for ZIG SIM PRO's ARKit + touch JSON over UDP and drives the robot:
+Listens for ZIG SIM PRO's ARKit + touch JSON over UDP or TCP (`--proto`) and drives the robot:
   * /target_frame   (geometry_msgs/PoseStamped) — desired EE pose
   * /gripper_command (std_msgs/Float64)         — finger target (open/closed)
 consumed by the IK node (joint_command_node --source topic).
@@ -81,12 +81,13 @@ class ARKitReceiver(Node):
         self.pose_pub = self.create_publisher(PoseStamped, args.target_topic, 1)
         self.grip_pub = self.create_publisher(Float64, args.gripper_topic, 1)
 
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((args.host, args.port))
-        threading.Thread(target=self._udp_loop, daemon=True).start()
+        self.proto = args.proto
+        self.host, self.port = args.host, args.port
+        self._rx_arrived = self._rx_handled = 0        # receive-rate diagnostic counters
+        threading.Thread(target=self._recv_loop, daemon=True).start()
+        self.create_timer(2.0, self._log_rx)
         self.get_logger().info(
-            f"arkit_receiver up: UDP :{args.port}  scale={self.scale}  ee={args.ee_frame}\n"
+            f"arkit_receiver up: {self.proto.upper()} :{self.port}  scale={self.scale}  ee={args.ee_frame}\n"
             f"   1 finger = move, 0 = freeze, 2-finger tap = toggle gripper")
 
     # -- robot joints (store latest; FK is done in the udp thread only) -----
@@ -105,19 +106,101 @@ class ARKitReceiver(Node):
             w, x, y, z = q
         return pin.Quaternion(float(w), float(x), float(y), float(z)).normalized().matrix()
 
-    # -- phone stream ------------------------------------------------------
-    def _udp_loop(self):
+    # -- phone stream (latest-only: always act on the FRESHEST frame, drop backlog) --------
+    def _recv_loop(self):
+        (self._udp_serve if self.proto == "udp" else self._tcp_serve)()
+
+    def _udp_serve(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)   # absorb bursts
+        except OSError:
+            pass
+        sock.bind((self.host, self.port))
         while rclpy.ok():
+            data, _ = sock.recvfrom(65535)             # block for at least one datagram
+            self._rx_arrived += 1
+            sock.setblocking(False)
+            while True:                                # drain the backlog -> keep only the newest
+                try:
+                    data, _ = sock.recvfrom(65535)
+                    self._rx_arrived += 1
+                except BlockingIOError:
+                    break
+            sock.setblocking(True)
+            self._feed(data)
+
+    def _tcp_serve(self):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind((self.host, self.port))
+        srv.listen(1)
+        dec = json.JSONDecoder()
+        while rclpy.ok():
+            self.get_logger().info(f"TCP: waiting for ZIG SIM to connect on :{self.port} …")
+            conn, src = srv.accept()
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)      # disable Nagle (our side)
+            self.get_logger().info(f"TCP: connected {src}")
+            buf = ""
             try:
-                data, _src = self.sock.recvfrom(65535)
-                sensors = json.loads(data.decode("utf-8"))["sensordata"]
-                arkit = sensors["arkit"]
-                pos = np.asarray(arkit["position"], dtype=float)
-                rot = arkit["rotation"]
-            except (KeyError, ValueError, UnicodeDecodeError):
-                continue
-            n_touch = len(sensors.get("touch") or [])
-            self._process(pos, rot, n_touch)
+                while rclpy.ok():
+                    chunk = conn.recv(65535)
+                    if not chunk:
+                        break                          # peer closed -> re-accept
+                    buf += chunk.decode("utf-8", "ignore")
+                    if len(buf) > (1 << 20):           # runaway guard (never a full object)
+                        buf = ""
+                    objs, buf = self._extract_objects(buf, dec)
+                    self._rx_arrived += len(objs)
+                    if objs:
+                        self._feed_obj(objs[-1])       # newest complete frame only
+            except OSError:
+                pass
+            finally:
+                conn.close()
+
+    @staticmethod
+    def _extract_objects(buf, dec):
+        """Pull every complete top-level JSON object out of a TCP byte-stream buffer. Framing-agnostic
+        (works whether ZIG SIM newline-delimits or concatenates). Returns (objects, remaining_buf)."""
+        objs, i, n = [], 0, len(buf)
+        while i < n:
+            while i < n and buf[i] in " \r\n\t":       # skip any delimiter whitespace
+                i += 1
+            if i >= n:
+                break
+            try:
+                obj, end = dec.raw_decode(buf, i)
+            except json.JSONDecodeError:
+                break                                  # trailing partial object -> wait for more bytes
+            objs.append(obj)
+            i = end
+        return objs, buf[i:]
+
+    # -- decode one frame -> drive the robot --
+    def _feed(self, data: bytes):
+        try:
+            self._feed_obj(json.loads(data.decode("utf-8")))
+        except (ValueError, UnicodeDecodeError):
+            pass
+
+    def _feed_obj(self, obj):
+        try:
+            sensors = obj["sensordata"]
+            arkit = sensors["arkit"]
+            pos = np.asarray(arkit["position"], dtype=float)
+            rot = arkit["rotation"]
+        except (KeyError, ValueError, TypeError):
+            return
+        self._rx_handled += 1
+        self._process(pos, rot, len(sensors.get("touch") or []))
+
+    def _log_rx(self):
+        if self._rx_arrived or self._rx_handled:
+            self.get_logger().info(
+                f"rx: {self._rx_arrived/2:.0f}/s arrived, {self._rx_handled/2:.0f}/s handled (latest-only)")
+        self._rx_arrived = self._rx_handled = 0
 
     def _process(self, pos: np.ndarray, rot, n: int):
         # Gripper: toggle on a rising edge into >=2 fingers; publish latched state.
@@ -173,6 +256,8 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=50000)
+    p.add_argument("--proto", choices=["udp", "tcp"], default="udp",
+                   help="ZIG SIM transport. udp (default) = lowest latency; tcp = reliable, can add lag.")
     p.add_argument("--scale", type=float, default=1.5, help="Phone->robot translation gain.")
     p.add_argument("--no-orient", dest="orient", action="store_false",
                    help="Disable 6-DoF wrist orientation (EE stays downward).")

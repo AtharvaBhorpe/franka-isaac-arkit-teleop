@@ -12,19 +12,13 @@ from teleop_arkit.core.robot import ARM_JOINTS, GRIPPER_JOINT, GRIPPER_OPEN
 # Rerun entity paths (reader side; rr.log normalizes a leading "/").
 STATE_ENTITY = "/observation/state"
 ACTION_ENTITY = "/action"
-GRIPPER_ENTITY = "/action/gripper_command"
-TARGET_POSE_ENTITY = "/action/target_pose"
 IMAGE_PREFIX = "/observation/images/"
 
 # Writer side (the strings passed to rr.log) — the same paths without the leading slash.
 STATE_LOG = STATE_ENTITY[1:]
 ACTION_LOG = ACTION_ENTITY[1:]
-GRIPPER_LOG = GRIPPER_ENTITY[1:]
-TARGET_POSE_LOG = TARGET_POSE_ENTITY[1:]
-
-# stats.json / normalization keys.
-STATE_KEY = "observation.state"
-ACTION_KEY = "action"
+GRIPPER_LOG = "action/gripper_command"
+TARGET_POSE_LOG = "action/target_pose"
 
 
 def image_log(name: str) -> str:

@@ -320,9 +320,12 @@ cube is gripped, carried without slipping, and dropped in the bin.
 - **(Teleop) no phone packets** — same WiFi? Targeting the **LAN** IP (not a
   Tailscale `100.x`/Docker `172.x` one)? `sudo ufw allow 50000/udp` run? Confirm
   with `pixi run -e ros sniff`.
-- **(Teleop) laggy/trailing arm** — it's the servo time-constant (≈ `1/kp_lin`) +
-  render, **not** the IK solve. Raise `--kp-lin` / `--rate` on the IK node; the
-  receiver is already event-driven. There's a ~30–50 ms floor (PhysX + render).
+- **(Teleop) laggy/trailing arm or lost frames** — the `arkit` receiver is **latest-only**
+  (drops backlogged phone frames), so growing lag is usually elsewhere: raise `--kp-lin` / `--rate`
+  on the IK node (servo time-constant ≈ `1/kp_lin`; ~30–50 ms PhysX+render floor), prefer the **LAN**
+  IP over a Tailscale relay, and watch the receiver's `rx: N/s arrived, M/s handled` log. Reliable
+  link over lossy WiFi? try `pixi run -e ros arkit-tcp` (TCP; reliable but can *add* latency —
+  see ZIG SIM's framing first with `pixi run -e ros sniff --proto tcp`).
 - **(Teleop) rotations mirrored / wrong axis** — try `arkit --quat-order wxyz`,
   or flip a row sign in `ARKIT_TO_ROS`; or `--no-orient` to fall back to downward.
 - **(Teleop) cube slips from the gripper** — raise friction in `apply_grasp_friction`

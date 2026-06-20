@@ -39,10 +39,6 @@ class CNNEncoder(nn.Module):
         return f.flatten(2).transpose(1, 2)         # (B, h·w, hidden)
 
 
-def _reparam(mu, logvar):
-    return mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)
-
-
 class ACTPolicy(nn.Module):
     def __init__(self, state_dim=8, action_dim=8, chunk=16, cameras=("scene", "wrist"),
                  hidden=256, enc_layers=4, dec_layers=4, nheads=8, dim_ff=1024,
@@ -51,6 +47,7 @@ class ACTPolicy(nn.Module):
         self.cameras = list(cameras)
         self.chunk, self.latent_dim, self.action_dim = chunk, latent_dim, action_dim
         self.kl_weight = kl_weight
+        self.img_hw = tuple(img_hw)
 
         # --- vision + state -> encoder tokens ---
         self.backbones = nn.ModuleDict({c: CNNEncoder(hidden) for c in self.cameras})
@@ -87,7 +84,7 @@ class ACTPolicy(nn.Module):
                              self.cvae_action(actions)], dim=1) + self.cvae_pos
             h = self.cvae_encoder(tok)[:, 0]                 # [cls] summary
             mu, logvar = self.latent_proj(h).chunk(2, dim=-1)
-            z = _reparam(mu, logvar)
+            z = mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)
         else:                                                # prior mean (inference)
             mu = logvar = None
             z = torch.zeros(B, self.latent_dim, device=state.device)

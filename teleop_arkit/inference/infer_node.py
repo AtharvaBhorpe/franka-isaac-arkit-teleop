@@ -31,9 +31,9 @@ from sensor_msgs.msg import Image, JointState
 
 from teleop_arkit.core import schema
 from teleop_arkit.core.cameras import parse_cameras, preprocess_image
-from teleop_arkit.core.config import ModelConfig
+from teleop_arkit.core.config import DatasetStats
 from teleop_arkit.core.robot import ARM_JOINTS, FINGER_JOINTS, GRIPPER_CLOSED, GRIPPER_OPEN
-from teleop_arkit.policies.act import ACTPolicy
+from teleop_arkit.policies.registry import build_model
 
 
 class InferNode(Node):
@@ -42,21 +42,20 @@ class InferNode(Node):
         self.device = args.device
         ckpt = torch.load(os.path.expanduser(args.ckpt), map_location=self.device,
                           weights_only=False)              # our own ckpt: config+stats dicts
-        self.cfg = ModelConfig.model_validate(ckpt["config"]).model_dump()  # validate train->infer contract
-        self.cameras = list(self.cfg["cameras"])
-        self.img_hw = tuple(self.cfg["img_hw"])
-        # 0 -> execute the FULL chunk open-loop, then re-plan. This is the right default for an
-        # absolute-position ACT: action[0] ≈ the current state (the recorded command barely leads
-        # /joint_states per step), so single-step receding (=1) stalls — the displacement is in the
-        # later chunk actions. Smaller values (e.g. 8) re-plan more often for closer-loop correction.
-        self.exec_horizon = args.exec_horizon if args.exec_horizon > 0 else int(self.cfg["chunk"])
-
-        self.model = ACTPolicy(**self.cfg).to(self.device)
+        self.model = build_model(ckpt["config"]).to(self.device)  # validate config + dispatch act/diffusion
         self.model.load_state_dict(ckpt["model"])
         self.model.eval()
+        self.cameras = list(self.model.cameras)
+        self.img_hw = tuple(self.model.img_hw)
+        # 0 -> execute the FULL chunk open-loop, then re-plan. Right default for an absolute-position
+        # policy: action[0] ≈ the current state (the recorded command barely leads /joint_states per
+        # step), so single-step receding (=1) stalls — the displacement is in the later chunk actions.
+        # Smaller values (e.g. 8) re-plan more often for closer-loop correction.
+        self.exec_horizon = args.exec_horizon if args.exec_horizon > 0 else int(self.model.chunk)
 
         self.stats = ckpt.get("stats")
         if self.stats:                                     # same normalization as rrd_dataset
+            DatasetStats.model_validate(self.stats)        # raises ValidationError on train→infer schema drift
             self.s_mean = np.asarray(self.stats["observation.state"]["mean"], np.float32)
             self.s_std = np.asarray(self.stats["observation.state"]["std"], np.float32)
             self.a_mean = np.asarray(self.stats["action"]["mean"], np.float32)
@@ -80,8 +79,10 @@ class InferNode(Node):
 
         rate = args.rate or float(ckpt.get("fps", 10.0))   # match the training fps grid
         self.create_timer(1.0 / rate, self._tick)
+        name = ckpt.get("config", {}).get("name", "act")
+        loss_val = ckpt.get("loss", ckpt.get("l1", float("nan")))
         self.get_logger().info(
-            f"act_infer up: ckpt L1={ckpt.get('l1'):.3f} cameras={self.cameras} "
+            f"{name}_infer up: ckpt loss={loss_val:.3f} cameras={self.cameras} "
             f"rate={rate:.0f}Hz horizon={self.exec_horizon} device={self.device} "
             f"norm={'yes' if self.stats else 'NONE'}")
 

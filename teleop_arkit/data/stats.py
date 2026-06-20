@@ -15,7 +15,8 @@ import os
 
 import numpy as np
 
-from teleop_arkit.data.dataset import ACTION_ENTITY, STATE_ENTITY, read_episode
+from teleop_arkit.core.schema import ACTION_ENTITY, STATE_ENTITY
+from teleop_arkit.data.dataset import read_episode
 
 
 def main():

@@ -161,6 +161,7 @@ Default section order:
 ## User Preferences
 
 When the user requests a durable behavior change, record it here or in the relevant child AGENTS.md.
+- **Ponytail mode** — Enabled (`full` level). Follow the lazy senior dev ladder before writing any code: YAGNI -> stdlib -> native -> one line -> minimum. No unrequested abstractions, boilerplate, or avoidable dependencies. Mark intentional simplifications with a `# ponytail:` comment.
 - **Documentation model** — `PROJECT.md` = append-only diary/history (keeps superseded ideas); the
   `AGENTS.md` tree = current scope/contracts only (no diary); the machine contract is code in
   `teleop_arkit/core/`. (Full statement under "Where to document progress / changes / observations".)

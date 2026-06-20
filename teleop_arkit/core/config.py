@@ -31,14 +31,17 @@ class EpisodeMeta(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    """The kwargs an ACTPolicy is built from — saved in the ckpt, replayed at inference."""
+    """The kwargs a policy is built from — saved in the ckpt, replayed at inference (see policies.registry)."""
     model_config = ConfigDict(extra="ignore")
+    name: str = "act"                              # registry dispatch key: 'act' | 'diffusion'
     state_dim: int = 8
     action_dim: int = 8
     chunk: int = 16
     cameras: tuple[str, ...]
-    kl_weight: float = 10.0
     img_hw: tuple[int, int] = (224, 224)
+    kl_weight: float = 10.0                        # ACT
+    num_train_timesteps: int = 100                 # Diffusion: DDPM train steps
+    num_inference_steps: int = 16                  # Diffusion: DDIM inference steps
 
 
 class StatEntry(BaseModel):
@@ -51,6 +54,3 @@ class StatEntry(BaseModel):
 
 class DatasetStats(RootModel[dict[str, StatEntry]]):
     """stats.json — {'observation.state': StatEntry, 'action': StatEntry}."""
-
-    def entry(self, key: str) -> StatEntry:
-        return self.root[key]

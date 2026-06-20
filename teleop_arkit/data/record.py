@@ -297,12 +297,12 @@ class EpisodeRecorder(Node):
 
     def _command_loop(self):
         actions = {
-            "s": lambda: self.start_episode(), "start": lambda: self.start_episode(),
+            "s": self.start_episode, "start": self.start_episode,
             "e": lambda: self.end_episode(True), "success": lambda: self.end_episode(True),
             "f": lambda: self.end_episode(False), "fail": lambda: self.end_episode(False),
-            "d": lambda: self.discard_episode(), "discard": lambda: self.discard_episode(),
-            "h": lambda: self._print_banner(), "help": lambda: self._print_banner(),
-            "?": lambda: self._print_banner(),
+            "d": self.discard_episode, "discard": self.discard_episode,
+            "h": self._print_banner, "help": self._print_banner,
+            "?": self._print_banner,
         }
         while rclpy.ok():
             try:

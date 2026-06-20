@@ -20,14 +20,13 @@ import time
 import cv2
 import numpy as np
 import pyarrow as pa
-import pyarrow.compute as pc
 import rerun.experimental as rre
 import torch
 from torch.utils.data import Dataset
 
 from teleop_arkit.core.cameras import preprocess_image
-from teleop_arkit.core.schema import (ACTION_ENTITY, GRIPPER_ENTITY,  # noqa: F401  (re-exported)
-                                      IMAGE_PREFIX, STATE_ENTITY)
+from teleop_arkit.core.config import DatasetStats
+from teleop_arkit.core.schema import ACTION_ENTITY, IMAGE_PREFIX, STATE_ENTITY
 
 
 # ----------------------------------------------------------------------------
@@ -41,7 +40,7 @@ def _log_time_ns(rb: "pa.RecordBatch") -> np.ndarray:
     `/target_frame` with WALL time while Isaac's joints/cameras carry SIM time — so `sim_time`
     is mixed-axis. log_time is one consistent axis (only sub-frame recorder-latency skew).
     """
-    return pc.cast(rb.column("log_time"), pa.int64()).to_numpy(zero_copy_only=False)
+    return rb.column("log_time").cast(pa.int64()).to_numpy(zero_copy_only=False)
 
 
 def read_episode(rrd_path: str, images: bool = True) -> dict:
@@ -164,7 +163,8 @@ class RrdDataset(Dataset):
         self.cameras = cameras
 
         stats_path = stats_path or os.path.join(self.root, "stats.json")
-        self.stats = json.load(open(stats_path)) if os.path.exists(stats_path) else None
+        self.stats = (DatasetStats.model_validate(json.load(open(stats_path))).model_dump()
+                      if os.path.exists(stats_path) else None)
 
         for rrd in sorted(glob.glob(os.path.join(self.root, "episode_*.rrd"))):
             meta_p = rrd[:-len(".rrd")] + ".meta.json"

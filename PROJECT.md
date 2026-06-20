@@ -545,4 +545,28 @@ Full plan + locked decisions: `.claude/plans/now-lets-talk-about-moonlit-rivest.
   (`teleop_arkit.joint_command_node`→`teleop_arkit.teleop.…`). Chose Mermaid over Excalidraw (renders
   inline, diffs, stays current); no maintenance skill added — kept under the existing DOX doc-update
   rule. Uncommitted on disk.
+- **2026-06-13** **Diffusion Policy added (second baseline) + model registry.** ACT underperformed at
+  25 episodes (barely grasping), so added a Diffusion Policy alongside it. Built the model-agnostic
+  seam `policies/registry.py` (`build_model(config)` dispatches on `config["name"]`) + `policies/base.py`
+  (the `Policy` interface). `policies/diffusion.py` = **transformer** DP (Chi et al. 2023): per-camera
+  CNN + state → obs memory, a conditional transformer denoises a noised action chunk; **in-house**
+  cosine-β DDPM (ε-pred) train + DDIM inference (no `diffusers` dep — keeps the "own the policy code"
+  ethos; chose the transformer variant over CNN ConditionalUnet1D to avoid error-prone skip/downsample
+  bookkeeping at chunk=16). `training/train.py` is now `--model {act,diffusion}` + generic metric
+  logging + best-by-loss; `inference/infer_node.py` rebuilds via `build_model(ckpt["config"])`
+  (auto-detects the model). `ModelConfig` gained `name` + DP fields; ACT stays back-compatible (old
+  `act_min.pt` still loads). Tasks: `smoke-dp`/`train-dp`/`infer-dp`. **Caveat:** DP usually needs ≥
+  ACT's data, so 25 eps may still underperform; also flagged trying ACT `infer --exec-horizon 8` first.
+  Uncommitted.
+- **2026-06-16** **ARKit transport: `--proto tcp` + latest-only receive.** Phone teleop showed delay +
+  dropped frames. Root fix: `arkit_receiver` now **acts on the freshest frame each loop** (UDP: drain
+  the socket backlog; TCP: keep only the newest complete JSON object) so lag can't accumulate, plus an
+  `rx: arrived/handled Hz` diagnostic. Added **`--proto {udp,tcp}`** (`arkit-tcp` task): UDP default
+  (lowest latency); TCP server with Nagle off + a framing-agnostic stream parser (`json.raw_decode` —
+  handles newline-delimited or concatenated JSON and partial reads). **Pushback noted:** TCP often
+  *worsens* real-time teleop (head-of-line blocking under loss, Nagle, stale-frame buffering), so
+  latest-only is the likely real fix and TCP is there to A/B. ZIG SIM's TCP framing + client/server
+  role are verifiable with `sniff --proto tcp` (already TCP-capable). Uncommitted.
+- **2026-06-19** **Ponytail mode (full) enabled.** Activated lazy senior dev mode to strictly adhere to the YAGNI -> stdlib -> native -> one line -> minimum ladder, avoiding unrequested abstractions, boilerplate, and unnecessary dependencies.
+
 

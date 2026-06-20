@@ -154,9 +154,9 @@ graph TD
 | `data/dataset.py` | `read_episode` + `RrdDataset` (align + chunk + decode) | `schema`, `cameras`, `config` | `eval-rrd` |
 | `data/stats.py` | mean/std/min/max → `stats.json` | (via `dataset.read_episode`) | `stats` |
 | `data/cache.py` | pre-decoded frame cache → `.cache/v1/` | (via `dataset`) | `cache` |
-| `policies/act.py` | `ACTPolicy` — compact CVAE ACT (~11.6 M) | (built from `config.ModelConfig`) | (used by train/infer) |
-| `training/train.py` | train/overfit loop → `act_min.pt` | `dataset`, `policies.act` | `train` / `smoke-act` |
-| `inference/infer_node.py` | ckpt → `/joint_command` (closed-loop) | `act`, `schema`, `cameras`, `config`, `robot`, `rosutil` | `infer` |
+| `policies/` | `registry.build_model` (the model seam) + `base.Policy`; `act.py` (CVAE ACT ~11.6 M) and `diffusion.py` (in-house DDPM/DDIM Diffusion Policy) | `config` | (built via registry) |
+| `training/train.py` | train/overfit loop (`--model act\|diffusion`) → ckpt | `dataset`, `policies.registry` | `train`/`smoke-act` · `train-dp`/`smoke-dp` |
+| `inference/infer_node.py` | ckpt → `/joint_command` (closed-loop; auto-detects model) | `policies.registry`, `schema`, `cameras`, `robot`, `rosutil` | `infer` / `infer-dp` |
 
 ---
 
@@ -315,15 +315,19 @@ pixi run -e ros cache             # (scale-prep) pre-decoded frame cache -> ~/re
 - **eval-rrd is your data gate:** confirm `observation.state (8,)`, `action (16, 8)`, images `(3,224,224)`, and a healthy decode rate before training at scale.
 
 ### Step 7 — Select a model & train · `ros` env
-The only model today is **`ACTPolicy`** (`policies/act.py`); `train.py` builds it from a `ModelConfig`.
-(The model-agnostic registry + Gemma VLA are the planned next seam — see `policies/AGENTS.md`.)
+Two baselines today, picked with `--model {act,diffusion}`; `policies/registry.build_model` builds the
+chosen one and the ckpt records its `config` (Gemma VLA later — see `policies/AGENTS.md`).
 ```bash
+# ACT (CVAE transformer):
 pixi run -e ros smoke-act                 # 50 steps, 1 episode — finite loss = data+model wired
-pixi run -e ros train --max-episodes 1    # OVERFIT one episode (the data-validation litmus; L1 -> ~0)
+pixi run -e ros train --max-episodes 1    # OVERFIT one episode (the data-validation litmus)
 pixi run -e ros train                     # full training over all success episodes
+# Diffusion Policy (in-house DDPM/DDIM):
+pixi run -e ros smoke-dp                  # 50-step sanity
+pixi run -e ros train-dp                  # full training -> checkpoints/diffusion.pt
 ```
-- **Files:** `training/train.py` → `data/dataset.py` + `policies/act.py` + `stats.json`.
-- **Output ckpt:** `~/rerun_episodes/checkpoints/act_min.pt` = `{model, config, stats, fps, l1}` — `config`/`stats` are what inference replays for train/infer parity.
+- **Files:** `training/train.py` → `policies/registry.py` → `policies/act.py` | `policies/diffusion.py`, + `data/dataset.py` + `stats.json`.
+- **Output ckpt:** `checkpoints/act_min.pt` (ACT) or `diffusion.pt` (DP) = `{model, config, stats, fps, loss}` — `config` (incl. `name`) + `stats` are what inference replays for parity.
 
 ### Step 8 — Infer (closed-loop in sim)
 ```bash
@@ -417,8 +421,8 @@ sequenceDiagram
 | `record` | ros | `data.record` | record demos → `.rrd` + `meta.json` |
 | `reset` | ros | (`ros2 topic pub` ×5) | re-home arm + randomize cube |
 | `eval-rrd` / `stats` / `cache` | ros | `data.dataset` / `data.stats` / `data.cache` | read+verify / normalization / frame cache |
-| `smoke-act` / `train` | ros | `training.train` | 50-step sanity / full train → `act_min.pt` |
-| `infer` | ros | `inference.infer_node` | policy → `/joint_command` (closed-loop) |
+| `smoke-act`/`train` · `smoke-dp`/`train-dp` | ros | `training.train` | 50-step sanity / full train (ACT or Diffusion) |
+| `infer` / `infer-dp` | ros | `inference.infer_node` | policy → `/joint_command` (closed-loop; model auto-detected from ckpt) |
 
 ---
 

@@ -10,13 +10,13 @@
 # orientation, the standard panda_hand_tcp convention).
 parent_frame: panda_hand
 tcp_offset:
-  translation: [0.003, 0.00062, 0.10948]
+  translation: [0.00012, 0.00046, 0.10018]
   rotation_wxyz: [1.0, 0.0, 0.0, 0.0]
 measured:
   source: cube-center-at-grasp
-  hand_world_pos: [0.14773, 0.39409, 0.54497]
-  hand_world_quat_wxyz: [-0.14552, 0.97258, 0.02858, 0.17916]
-  cube_world_pos: [0.18784, 0.42561, 0.44806]
+  hand_world_pos: [0.14655, 0.39421, 0.54571]
+  hand_world_quat_wxyz: [-0.13572, 0.97359, 0.03179, 0.18081]
+  cube_world_pos: [0.18112, 0.42139, 0.45569]
 reference:
   # Canonical Franka panda_hand -> panda_hand_tcp is ~0.1034 m along +Z; the
   # measured translation z above should land near this as a sanity check.

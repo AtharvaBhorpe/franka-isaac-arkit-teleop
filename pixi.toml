@@ -76,6 +76,7 @@ ik-demo = "python -m teleop_arkit.teleop.joint_command_node"          # scripted
 ik-topic = "python -m teleop_arkit.teleop.joint_command_node --source topic"  # follow /target_frame (Phase 5)
 # Phase 5 — iPhone/ARKit (ZIG SIM PRO) -> /target_frame.
 arkit = "python -m teleop_arkit.teleop.arkit_receiver"
+arkit-tcp = "python -m teleop_arkit.teleop.arkit_receiver --proto tcp"   # ZIG SIM over TCP (vs default UDP)
 sniff = "python -m teleop_arkit.teleop.sniff_stream"
 robot-model = "python -m teleop_arkit.teleop.robot_state_pub"  # rviz2 RobotModel (Phase 4.1)
 # Phase 7 — record teleop demos to Rerun .rrd; cam-hz measures camera rate before a campaign.
@@ -91,6 +92,10 @@ cache = "python -m teleop_arkit.data.cache"   # build the train-ready frame cach
 smoke-act = "python -m teleop_arkit.training.train --steps 50 --max-episodes 1"   # 50-step model+data sanity
 train = "python -m teleop_arkit.training.train"            # train/overfit the compact ACT (--max-episodes N)
 infer = "python -m teleop_arkit.inference.infer_node"       # ACT policy -> /joint_command (closed-loop in sim)
+# Phase 7 — Diffusion Policy (second baseline; in-house DDPM/DDIM, no diffusers dep).
+smoke-dp = "python -m teleop_arkit.training.train --model diffusion --steps 50 --max-episodes 1"
+train-dp = "python -m teleop_arkit.training.train --model diffusion"
+infer-dp = "python -m teleop_arkit.inference.infer_node --ckpt ~/rerun_episodes/checkpoints/diffusion.pt"
 
 [environments]
 # ONE runtime env for all of Phase 7 — record + read + train + infer — built on RoboStack
