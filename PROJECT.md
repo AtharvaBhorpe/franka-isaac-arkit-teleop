@@ -568,5 +568,10 @@ Full plan + locked decisions: `.claude/plans/now-lets-talk-about-moonlit-rivest.
   latest-only is the likely real fix and TCP is there to A/B. ZIG SIM's TCP framing + client/server
   role are verifiable with `sniff --proto tcp` (already TCP-capable). Uncommitted.
 - **2026-06-19** **Ponytail mode (full) enabled.** Activated lazy senior dev mode to strictly adhere to the YAGNI -> stdlib -> native -> one line -> minimum ladder, avoiding unrequested abstractions, boilerplate, and unnecessary dependencies.
+- **2026-06-21** **Cube recolored blue -> red** (`CUBE_COLOR` in `franka_scene.py`). The stock
+  FrankaPickPlace cube ships `colors="blue"`, which blends into Isaac's blue/grid floor and the
+  pinkish KLT bin. `build_scene` now overwrites the cube's `displayColor` primvar (the same attr
+  the experimental `Cube` sets) to red — better contrast in the scene-cam observations (and for the
+  human teleoperator). Persists across `/episode/reset` (reset only re-poses the cube).
 
 

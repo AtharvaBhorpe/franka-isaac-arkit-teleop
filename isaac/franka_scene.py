@@ -24,6 +24,9 @@ import numpy as np
 # Cube geometry mirrors NVIDIA's FrankaPickPlace defaults (proven graspable):
 # 51.5 mm cube vs an 80 mm gripper opening -> ~28 mm clearance.
 CUBE_SIZE_M = 0.0515
+# Visual color (USD displayColor, the same primvar the stock cube's colors="blue" sets).
+# "blue" hides against Isaac's blue/grid floor + the pinkish KLT bin; red contrasts both.
+CUBE_COLOR = (1.0, 0.0, 0.0)  # RGB
 
 # Bin: the KLT prop scaled DOWN so a 5 cm cube isn't lost in a 30 cm crate and the
 # gripper can reach the interior. small_KLT ~0.30x0.20x0.147 m -> ~0.15x0.10x0.073
@@ -296,6 +299,11 @@ def build_scene():
         cube_size=np.array([CUBE_SIZE_M] * 3),
         robot_path=ROBOT_PATH,
     )
+
+    # Recolor the cube (overwrite the same displayColor primvar setup_scene set to "blue").
+    # reset() only re-poses the cube, so this persists across episode resets.
+    cube_prim = stage_utils.get_current_stage().GetPrimAtPath(CUBE_PATH)
+    UsdGeom.Gprim(cube_prim).GetDisplayColorAttr().Set([Gf.Vec3f(*CUBE_COLOR)])
 
     # Resolve + reference the bin, scaled and placed on the ground at BIN_XY.
     assets_root = get_assets_root_path()
