@@ -41,6 +41,9 @@ def main():
     p.add_argument("--diffusion-steps", type=int, default=100, help="Diffusion: DDPM train steps.")
     p.add_argument("--infer-steps", type=int, default=16, help="Diffusion: DDIM inference steps.")
     p.add_argument("--max-episodes", type=int, default=0, help=">0: load only first N episodes.")
+    p.add_argument("--cameras", nargs="*", default=None,
+                   help="Camera names to train on (subset of the recorded set). Default: all. "
+                        "Modality ablation: omit 'tactile' to train vision+joints only.")
     p.add_argument("--out", default="~/rerun_episodes/checkpoints")
     p.add_argument("--ckpt-name", default="", help="Override ckpt filename (default: <model>.pt).")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -48,7 +51,7 @@ def main():
 
     t0 = time.time()
     ds = RrdDataset(args.root, fps=args.fps, chunk=args.chunk, img_hw=(args.img, args.img),
-                    max_episodes=args.max_episodes)
+                    cameras=args.cameras, max_episodes=args.max_episodes)
     if len(ds) == 0:
         print("✗ no samples — check episodes / success flags"); return
     dl = DataLoader(ds, batch_size=args.batch, shuffle=True, num_workers=0, drop_last=True)

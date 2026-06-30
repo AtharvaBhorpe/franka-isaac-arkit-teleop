@@ -275,10 +275,11 @@ cube is gripped, carried without slipping, and dropped in the bin.
 | `PROJECT.md` | The plan: phases, decisions, risks. |
 | `docs/HOWTO.md` | This guide. |
 | `docs/ARCHITECTURE.md` | Code flow + file connections (diagrams) + the full teleop→record→train→infer runbook. |
-| `isaac/franka_scene.py` | Sim library: constants, helpers, scene builders, ROS2 graph, grasp friction. |
-| `isaac/load_franka_pickplace.py` | Sim app entry: arg parsing, run loops, `main` (imports `franka_scene`). |
+| `isaac/franka_scene.py` | Sim library: constants, helpers, scene builders, ROS2 graph, grasp friction, `cube_in_bin`. |
+| `isaac/load_franka_pickplace.py` | Sim app entry: arg parsing, run loops (teleop / auto-record / eval), `main`. |
+| `isaac/tactile.py` | `TactileGrid` — gripper contact-force field → `/tactile/image_raw` (`--tactile`). |
 | `teleop_arkit/core/` | Shared contract imported everywhere: `robot.py` (joints/home), `schema.py` (.rrd entities + state/action vectors), `cameras.py`, `config.py` (pydantic), `rosutil.py`. |
-| `teleop_arkit/teleop/` | Live teleop nodes: `ik.py` (Pinocchio servo-IK), `joint_command_node.py` (target → IK → `/joint_command`), `arkit_receiver.py` (ZIG SIM → `/target_frame` + `/gripper_command`), `robot_state_pub.py` (rviz), `sniff_stream.py` (UDP sniffer). |
+| `teleop_arkit/teleop/` | Live teleop nodes: `ik.py` (Pinocchio servo-IK), `joint_command_node.py` (target → IK → `/joint_command`), `arkit_receiver.py` (ZIG SIM → `/target_frame` + `/gripper_command`), `robot_state_pub.py` (rviz), `sniff_stream.py` (UDP sniffer), `rr_viz.py` (live Rerun monitor). |
 | `teleop_arkit/data/` | Phase-7 data layer: `record.py` (demos → `.rrd`), `dataset.py` (`RrdDataset`), `stats.py`, `cache.py`. |
 | `teleop_arkit/policies/` | `act.py` — compact CVAE ACT baseline. |
 | `teleop_arkit/training/` | `train.py` — train/overfit → `act_min.pt`. |
@@ -368,4 +369,26 @@ pixi run -e ros infer        # closed-loop: ACT -> /joint_command
 Decisions + full plan: [PROJECT.md](../PROJECT.md) and
 `.claude/plans/now-lets-talk-about-moonlit-rivest.md`.
 
-**Optional polish not yet done:** finer grip-force tuning.
+### Hands-off data collection (no phone) + tactile + the modality ablation
+The scripted FrankaPickPlace expert can collect + auto-label demos with no teleop, and a tactile
+sensor (`--tactile`) publishes a per-pad gripper force field (`/tactile/image_raw`) that rides the
+camera pipeline as just another modality:
+```bash
+# Terminal A — expert drives + orchestrates the recorder (+ --tactile for the force field):
+pixi run franka-auto-record --tactile --cycles 50
+# Terminal B — recorder (settle 0; the auto loop owns reset+settle). record-tac logs the tactile cam:
+pixi run -e ros record-tac
+```
+Then test **whether tactile raises closed-loop success rate** — train two policies on the *same*
+dataset (tactile in vs out) and score each:
+```bash
+pixi run -e ros stats && pixi run -e ros cache
+pixi run -e ros train-notac          # vision + joints     -> act_notac.pt
+pixi run -e ros train-tac            # + tactile           -> act_tac.pt
+pixi run franka-eval            ; pixi run -e ros infer-notac    # rate A (A then B)
+pixi run franka-eval --tactile  ; pixi run -e ros infer-tac     # rate B  → B>A means tactile helps
+```
+Live monitor any time: `pixi run -e ros rr-viz` (camera feeds + one all-joint plot).
+Full runbook with diagrams: **[ARCHITECTURE.md](ARCHITECTURE.md)** §6 (Steps 9–10).
+
+**Optional polish not yet done:** finer grip-force tuning; tactile calibration constants (`isaac/tactile.py`) are tuned for the current finger URDF.

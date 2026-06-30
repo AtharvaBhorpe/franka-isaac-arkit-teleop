@@ -15,6 +15,8 @@ Drive the simulated (or, later, real) Franka in real time: iPhone/ARKit pose →
   6-DoF orient. Tasks: `arkit`, `arkit-tcp`.
 - `robot_state_pub.py` — `/robot_description` + `/tf` for an rviz `RobotModel`. Task: `robot-model`.
 - `sniff_stream.py` — raw ZIG SIM UDP/TCP printer (diagnostic; `sniff --proto tcp` shows TCP framing). Task: `sniff`.
+- `rr_viz.py` — `RerunViz`: read-only live Rerun monitor — camera topics (`--cameras`, ROS only) +
+  one all-joint-angles plot from `/joint_states`. No recording. Task: `rr-viz`.
 
 ## Local Contracts
 - Control seam: `/target_frame` (PoseStamped) → IK → `/joint_command` (JointState); gripper via

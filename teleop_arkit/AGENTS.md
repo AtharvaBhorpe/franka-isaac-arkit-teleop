@@ -11,15 +11,17 @@ contract lives in `core/`.
   module paths live here).
 - Two **leaf** sub-packages owned directly here (no child doc of their own yet):
   - `training/` — `train.py`: the PyTorch train/overfit loop. The checkpoint bundles
-    `{model, config (core.config.ModelConfig), stats}`. Tasks: `train`, `smoke-act`
-    (`--steps 50 --max-episodes 1`).
+    `{model, config (core.config.ModelConfig), stats}`. `--cameras <names…>` trains on a camera
+    **subset** of the recorded set (default all) — the modality-ablation knob. Tasks: `train`,
+    `smoke-act` (`--steps 50 --max-episodes 1`), `train-tac` / `train-notac` (± tactile, same data).
   - `inference/` — `infer_node.py`: loads a ckpt, subscribes obs, publishes `/joint_command`
-    (closed-loop in sim). Mirrors the recorder's preprocessing for train/infer parity. Task: `infer`.
+    (closed-loop in sim). Mirrors the recorder's preprocessing for train/infer parity. Tasks: `infer`,
+    `infer-tac` / `infer-notac` (the ablation policies; pair with the Isaac `franka-eval` harness).
 - The indexed children below own their own subtree.
 
 ## Local Contracts
 - Entry points are pixi tasks (`pixi run -e ros <task>`), NOT a `python -m teleop_arkit` dispatcher.
-  Task module paths: `teleop.{joint_command_node,arkit_receiver,sniff_stream,robot_state_pub}`,
+  Task module paths: `teleop.{joint_command_node,arkit_receiver,sniff_stream,robot_state_pub,rr_viz}`,
   `data.{record,dataset,stats,cache}`, `training.train`, `inference.infer_node`. Task names are stable.
 - The obs/action contract is `core.schema`; the robot spec is `core.robot` — never re-derive them here.
 - Action space = joint-space absolute (`/joint_command`, 7 arm + gripper); EE-pose (`/target_frame`)

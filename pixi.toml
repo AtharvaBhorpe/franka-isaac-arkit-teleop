@@ -33,6 +33,12 @@ franka-ros = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py --ros"
 franka-teleop = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py --control ros"
 # Headless (no Isaac GUI) — teleop by watching the cameras in the Rerun viewer (record --view).
 franka-teleop-headless = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py --control ros --headless"
+# Phase 7 — HANDS-OFF data collection: the scripted expert drives + orchestrates the recorder.
+# Pair with `pixi run -e ros record-auto` (no phone/IK/arkit). --cycles N for N episodes.
+franka-auto-record = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py --control auto --record"
+# Closed-loop policy success-rate eval (modality ablation): pair with `pixi run -e ros infer-tac`
+# or `infer-notac`. Add --tactile for the tactile policy. --eval-trials N.
+franka-eval = "./scripts/run_isaac.sh isaac/load_franka_pickplace.py --control ros --eval"
 # Launch the Isaac Sim 6.0 GUI app.
 isaac-sim = "./scripts/run_isaac.sh --gui"
 
@@ -79,8 +85,13 @@ arkit = "python -m teleop_arkit.teleop.arkit_receiver"
 arkit-tcp = "python -m teleop_arkit.teleop.arkit_receiver --proto tcp"   # ZIG SIM over TCP (vs default UDP)
 sniff = "python -m teleop_arkit.teleop.sniff_stream"
 robot-model = "python -m teleop_arkit.teleop.robot_state_pub"  # rviz2 RobotModel (Phase 4.1)
+rr-viz = "python -m teleop_arkit.teleop.rr_viz"   # live Rerun: camera feeds + one all-joint-angles plot
 # Phase 7 — record teleop demos to Rerun .rrd; cam-hz measures camera rate before a campaign.
 record = "python -m teleop_arkit.data.record"
+# Hands-off recorder for `franka-auto-record`: settle 0 (the auto loop owns reset+settle).
+record-auto = "python -m teleop_arkit.data.record --settle-secs 0"
+# + the 32x12 gripper tactile force field (normal+shear) as a 3rd camera modality (pair with `--tactile`).
+record-tac = "python -m teleop_arkit.data.record --settle-secs 0 --cameras 'wrist=/wrist_cam/image_raw scene=/scene_cam/image_raw tactile=/tactile/image_raw'"
 cam-hz = "ros2 topic hz /wrist_cam/image_raw"
 # Re-home the arm + randomize the cube; publishes 5x (a single /episode/reset is DDS-dropped).
 # Use before recording an episode and before a closed-loop `infer` run.
@@ -92,6 +103,12 @@ cache = "python -m teleop_arkit.data.cache"   # build the train-ready frame cach
 smoke-act = "python -m teleop_arkit.training.train --steps 50 --max-episodes 1"   # 50-step model+data sanity
 train = "python -m teleop_arkit.training.train"            # train/overfit the compact ACT (--max-episodes N)
 infer = "python -m teleop_arkit.inference.infer_node"       # ACT policy -> /joint_command (closed-loop in sim)
+# --- Tactile-modality ablation: train TWO policies on the SAME (tactile-inclusive) dataset, then
+#     eval each closed-loop via `franka-eval` (+ `--tactile` for the tactile policy). Compare rates.
+train-tac = "python -m teleop_arkit.training.train --ckpt-name act_tac.pt"                       # vision+joints+tactile
+train-notac = "python -m teleop_arkit.training.train --cameras wrist scene --ckpt-name act_notac.pt"  # vision+joints only
+infer-tac = "python -m teleop_arkit.inference.infer_node --ckpt ~/rerun_episodes/checkpoints/act_tac.pt --cameras 'wrist=/wrist_cam/image_raw scene=/scene_cam/image_raw tactile=/tactile/image_raw'"
+infer-notac = "python -m teleop_arkit.inference.infer_node --ckpt ~/rerun_episodes/checkpoints/act_notac.pt --cameras 'wrist=/wrist_cam/image_raw scene=/scene_cam/image_raw'"
 # Phase 7 — Diffusion Policy (second baseline; in-house DDPM/DDIM, no diffusers dep).
 smoke-dp = "python -m teleop_arkit.training.train --model diffusion --steps 50 --max-episodes 1"
 train-dp = "python -m teleop_arkit.training.train --model diffusion"

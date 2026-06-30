@@ -574,4 +574,100 @@ Full plan + locked decisions: `.claude/plans/now-lets-talk-about-moonlit-rivest.
   the experimental `Cube` sets) to red — better contrast in the scene-cam observations (and for the
   human teleoperator). Persists across `/episode/reset` (reset only re-poses the cube).
 
+- **2026-06-29** **Hands-off auto data collection (`franka-auto-record`).** Added a scripted-expert
+  recording path so demos can be generated without the phone: `load_franka_pickplace.py --control
+  auto --record` reuses NVIDIA's `FrankaPickPlace` controller as the expert and, per cycle,
+  randomizes the cube, drives the existing `record` node via `/record/command` (s/e/f), mirrors the
+  expert's joint targets onto `/joint_command`, and auto-labels each episode with the new
+  `fs.cube_in_bin()` AABB check (`is_done()` only means the state machine finished, not success).
+  The recorder is **unchanged** — it already had the `/record/command` automation hook. Key
+  decisions/gotchas: (1) the ROS graph keeps `subscribe=False` in auto mode, so Isaac does NOT
+  consume our `/joint_command` (no fight with the expert); only the recorder reads it. (2) Action =
+  achieved `get_dof_positions()` (the experimental Articulation doesn't expose its applied target);
+  the dataset's next-window sampling turns the trajectory into the motion target. (3) Pair with
+  `record-auto` (= `record --settle-secs 0`) — the auto loop owns reset+settle (`--settle-steps`)
+  and a `--gap-steps` window so the recorder can finalize each `.rrd` between episodes. This is a
+  **scripted-expert** dataset (imitates the controller) — ideal for Phase-7 step-6 closed-loop
+  validation + scaling demos, NOT a replacement for human-teleop data.
+
+- **2026-06-30** **Gripper tactile sensor (`--tactile`) — first tactile modality.** `isaac/tactile.py`
+  `TactileGrid` reads detailed per-contact data on the two Panda finger pads via the experimental
+  `RigidPrim(contact_filter_paths=[cube], max_contact_count=64).get_contact_force_data()` (gives
+  per-contact **world points + normal forces**), transforms each point into the pad-local frame
+  (`fs.quat_to_rotmat`, world→local `R.T@(p−o)`), bins onto the pad face into a **4×16 force grid**
+  summed over both pads, and heat-colormaps it (pure-numpy ramp — Isaac's bundled python has no cv2)
+  → publishes `/tactile/image_raw` (rgb8). **Design decision (the laziest correct one):** the IL
+  pipeline is already modality-agnostic via the *camera* abstraction (recorder logs `EncodedImage`,
+  dataset decodes images, policy has a vision encoder), and a tactile heatmap IS an image — so the
+  4×16 grid rides `--cameras` as `tactile=/tactile/image_raw` with **zero** changes to
+  recorder/dataset/schema/policy. Tasks: Isaac `franka-auto-record --tactile` (or any mode +
+  `--tactile`) + ros `record-tac`. **Calibration TODO (ponytail knobs, can't tune without running):**
+  pad-face axes (`LONG_AXIS`/`WIDE_AXIS` = local Z/X), extents (`PAD_LEN_M`/`PAD_WID_M`), `FORCE_MAX_N`
+  colour scale, and `PHYSICS_DT` — all estimates to verify against the finger collider on a live run.
+  **Known lossiness:** a 4×16 grid JPEG'd + resized to 224² in `dataset.py` is crude; upgrade path is
+  a raw-tensor tactile entity in `core.schema` if the policy needs crisp taxels. Verified offline:
+  `py_compile` + `tactile.demo()` (binning + colormap asserts). NOT yet run in-sim — first run, watch
+  `/tactile/image_raw` in `rr-viz` while the gripper grasps and tune the calibration constants.
+
+- **2026-06-30** **Tactile grid resolution bumped 4×16 → 32×12** (`GRID_ROWS, GRID_COLS` in
+  `tactile.py`). Per the `4×16`→`(rows,cols)` convention: 32 taxels across the pad width, 12 along
+  its length. Publisher + dataset are resolution-dynamic, so only the two constants + docs changed.
+
+- **2026-06-30** **FlexiTac/TacSL evaluation → ported the representation, not the fork.** Q: use the
+  [FlexiTac-IsaacSim](https://github.com/binghao-huang/FlexiTac-IsaacSim-Simulation) asset instead of
+  our taxel? Findings: FlexiTac is a **full IsaacLab fork** (vendors `source/isaaclab/`) pinned to
+  **Isaac Sim 5.1**, on the **ALOHA** robot, whose tactile is **TacSL** — an IsaacLab sensor
+  (`isaaclab_contrib.sensors.tacsl_sensor.VisuoTactileSensorCfg`) reading a **GelSight R15 gel-finger
+  USD** (deformable elastomer) with GPU compliant contact. We run the **6.0.1 standalone binary**,
+  zero IsaacLab (verified), Franka rigid fingers, CPU PhysX — so the asset/fork is **not** a drop-in;
+  adopting it = re-platforming (IsaacLab + Isaac 5.1 + GelSight fingers + GPU). **Decisive detail:** the
+  FlexiTac repo tree has **no tactile asset and no sensor code** — no `.usd` gel finger, no
+  `tacsl`/`visuotactile` module; the sensing is *imported* from `isaaclab_contrib` (TacSL) + a GelSight
+  USD from NVIDIA's Isaac asset library. So there is no "FlexiTac asset" to adopt; the reusable tech
+  lives in IsaacLab + the Isaac asset library, behind the re-platform. **What we did instead:**
+  TacSL's force-field output is `tactile_normal_force (R×C)` + `tactile_shear_force (R×C×2)`, rendered
+  as a shear image (`compute_tactile_shear_image`). Our taxel was normal-only, so we **ported that
+  representation natively**: read normal (`get_contact_force_data`) + tangential/shear
+  (`get_friction_data`) on our 6.0.1 `RigidPrim` contact view, bin both onto the pad face → a 32×12
+  normal+shear field, published as a TacSL-style shear image (`--tactile-mode shear`: R,G=shear,
+  B=normal; `normal` keeps the heat-only heatmap). So we now use FlexiTac's **sensor model** on our
+  stack with no new deps. Still missing vs full TacSL: the **optical GelSight image** + true compliant
+  elastomer contact (rigid-contact approximation) — the documented upgrade path if the policy needs
+  it (would require IsaacLab + a gel-finger asset on a matching Isaac/IsaacLab pair). Verified offline:
+  `py_compile` + `tactile.demo()` (cell-binning + normal/shear colormaps); NOT yet run in-sim — first
+  run, confirm `get_friction_data` returns shear on the articulation finger links and tune
+  `FORCE_MAX_N`/`SHEAR_MAX_N`.
+
+- **2026-06-30** **Tactile verified in-sim + calibrated.** First run hit two real issues, both fixed:
+  (1) the experimental `RigidPrim` contact view needs **`PhysxContactReportAPI`** on the finger/cube
+  bodies (else "Failed to find contact report API") — applied in `enable_contact_reporting()` BEFORE
+  `play()`; (2) per-step contact reads are 3 GPU syncs → throttled to ~20 Hz + graceful-disable so a
+  contact-API error can't freeze the sim. Confirmed working: auto-grasp shows **4 contacts, ~3–5.5 N
+  normal, ~0.4–3 N shear**. Calibrated the pad projection from the measured contact cloud (link-local
+  x≈±0.011, y≈0 normal, **z≈0.0536 offset down the finger** — the link origin is NOT the pad center):
+  set `PAD_ORIGIN=(0,0,0.0536)`, extents `0.020×0.026`, `FORCE_MAX_N=6`, `SHEAR_MAX_N=3`. Contacts now
+  map on-grid (rows 2–29, mid column) instead of clamping to corners. Rigid contact reports are
+  **sparse** (2–4 flickering points at the patch edges), but the cube covers the whole pad — so
+  `read()` fills the contacts' **bounding box** (grown by `PATCH=2`) into a solid, stable rectangle
+  whose brightness tracks force (vs flickering dots). Also: rr-viz now `send_blueprint` (force) so it
+  reflects the requested `--cameras` instead of a cached layout. Per request, the two pads are now
+  rendered **separately** (left | divider | right, image 32×25), and the look matches the FlexiTac
+  reference: **jet colormap** (dark-blue rest → cyan/green/yellow → red core) + a Gaussian `_blur` so
+  the bbox-filled contact reads as a smooth blob. Default `--tactile-mode normal`; `shear` (R,G=shear,
+  B=normal) remains.
+
+- **2026-06-30** **Tactile-modality ablation harness — the actual goal.** The point of the tactile
+  sensor isn't FlexiTac fidelity; it's to **prove a new modality raises closed-loop success rate** vs
+  vision+joints alone, using our own taxel grid. Built the two missing pieces: (1) `train.py
+  --cameras <names…>` trains on a camera **subset** of the *same* recorded dataset (`RrdDataset`
+  already filtered by `self.cameras`), so policy A (vision+joints) and policy B (+tactile) differ in
+  exactly one variable; (2) `load_franka_pickplace.py --control ros --eval` (`run_eval`, task
+  `franka-eval`) = a closed-loop **success-rate** harness: N trials, randomize cube → give the `infer`
+  policy a time budget → score `fs.cube_in_bin` → print the rate. Protocol as tasks: collect once with
+  `franka-auto-record --tactile` + `record-tac` → `stats`/`cache` → `train-tac` vs `train-notac` (same
+  data) → `franka-eval` (+`--tactile` for the tactile policy) with `infer-tac` / `infer-notac` →
+  compare rates. The scripted expert's own per-cycle success (from `--record`) is the upper-bound
+  baseline. Verified offline: `py_compile` + tasks register; NOT yet run in-sim (needs a trained
+  policy + closed-loop Isaac). Caveat: ACT is ~stateless per inference so cube-only reset between
+  trials is fine; if a policy carries an action-chunk buffer, have `infer` clear it on `/episode/reset`.
 

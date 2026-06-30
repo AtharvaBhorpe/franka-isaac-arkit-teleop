@@ -143,8 +143,10 @@ graph TD
 
 | File | Role | Imports from `core/` | Entry point |
 |---|---|---|---|
-| `isaac/franka_scene.py` | sim **library**: scene/camera builders, ROS2 graph, `randomize_cube_pose`, `CUBE_SPAWN_REGION` | — (separate runtime) | (imported by the app) |
-| `isaac/load_franka_pickplace.py` | sim **app**: args, run loops, `main`, `_ResetListener` | — | `pixi run franka` / `franka-teleop` |
+| `isaac/franka_scene.py` | sim **library**: scene/camera builders, ROS2 graph, `randomize_cube_pose`, `CUBE_SPAWN_REGION`, `bin_world_aabb`/`cube_in_bin` | — (separate runtime) | (imported by the app) |
+| `isaac/load_franka_pickplace.py` | sim **app**: args, run loops (`run_ros_controlled`/`run_autonomous`/`run_eval`), `main`, `_ResetListener`, auto-record + `--tactile` wiring | — | `pixi run franka` / `franka-teleop` / `franka-auto-record` / `franka-eval` |
+| `isaac/tactile.py` | `TactileGrid` — per-pad PhysX contact → 32×12 normal+shear force field → `/tactile/image_raw` (jet image). Import-safe | — | (imported by the app under `--tactile`) |
+| `teleop/rr_viz.py` | `RerunViz` — live monitor: camera topics + one all-joint plot | `schema`, `cameras`, `rosutil` | `rr-viz` |
 | `teleop/ik.py` | `CartesianServoIK` — Pinocchio damped-least-squares servo | `robot` | `python -m teleop_arkit.teleop.ik` (self-test) |
 | `teleop/joint_command_node.py` | `/target_frame` → IK → `/joint_command` | `robot`, `rosutil` | `ik-topic` / `ik-demo` |
 | `teleop/arkit_receiver.py` | ZIG SIM UDP → `/target_frame` + `/gripper_command` | `robot`, `rosutil` | `arkit` |
@@ -155,7 +157,7 @@ graph TD
 | `data/stats.py` | mean/std/min/max → `stats.json` | (via `dataset.read_episode`) | `stats` |
 | `data/cache.py` | pre-decoded frame cache → `.cache/v1/` | (via `dataset`) | `cache` |
 | `policies/` | `registry.build_model` (the model seam) + `base.Policy`; `act.py` (CVAE ACT ~11.6 M) and `diffusion.py` (in-house DDPM/DDIM Diffusion Policy) | `config` | (built via registry) |
-| `training/train.py` | train/overfit loop (`--model act\|diffusion`) → ckpt | `dataset`, `policies.registry` | `train`/`smoke-act` · `train-dp`/`smoke-dp` |
+| `training/train.py` | train/overfit loop (`--model act\|diffusion`, `--cameras <subset>` for the modality ablation) → ckpt | `dataset`, `policies.registry` | `train`/`smoke-act` · `train-tac`/`train-notac` |
 | `inference/infer_node.py` | ckpt → `/joint_command` (closed-loop; auto-detects model) | `policies.registry`, `schema`, `cameras`, `robot`, `rosutil` | `infer` / `infer-dp` |
 
 ---
@@ -188,14 +190,15 @@ graph LR
 |---|---|---|---|
 | `/clock` | `rosgraph_msgs/Clock` | Isaac | recorder (sets `sim_time`) |
 | `/joint_states` | `sensor_msgs/JointState` | Isaac | joint_command_node, arkit_receiver, recorder, infer_node |
-| `/joint_command` | `sensor_msgs/JointState` | joint_command_node **or** infer_node | Isaac (`ArticulationController`); recorder (as the *action*) |
+| `/joint_command` | `sensor_msgs/JointState` | joint_command_node, infer_node, **or** the Isaac auto-record loop (`--record`, mirrored expert targets) | Isaac (`ArticulationController`); recorder (as the *action*) |
 | `/target_frame` | `geometry_msgs/PoseStamped` | arkit_receiver | joint_command_node, recorder (auxiliary) |
 | `/gripper_command` | `std_msgs/Float64` | arkit_receiver | joint_command_node, recorder |
 | `/episode/reset` | `std_msgs/Empty` | recorder (×3) / the `reset` task (×5) | Isaac `_ResetListener`, joint_command_node |
 | `/wrist_cam/image_raw` | `sensor_msgs/Image` (640×480) | Isaac | recorder, infer_node |
 | `/scene_cam/image_raw` | `sensor_msgs/Image` (1280×720) | Isaac | recorder, infer_node |
+| `/tactile/image_raw` | `sensor_msgs/Image` (32×25, `--tactile`) | Isaac (`tactile.py`) | recorder, infer_node (as a camera) |
 | `/tf`, `/{cam}/camera_info` | tf2 / CameraInfo | Isaac | rviz / external |
-| `/record/command` | `std_msgs/String` | (you, for automation) | recorder (`s`/`e`/`f`/`d`/`q`) |
+| `/record/command` | `std_msgs/String` | the auto-record loop (`--record`), or you | recorder (`s`/`e`/`f`/`d`/`q`) |
 
 > **Gotcha:** a single `/episode/reset` is dropped by a DDS discovery race — that's why the recorder
 > publishes it 3× and the standalone `reset` task 5×.
@@ -340,6 +343,34 @@ pixi run -e ros infer                      # loads act_min.pt -> /joint_command
 - **Files:** `inference/infer_node.py` (validates `ckpt["config"]` via `ModelConfig`, mirrors `preprocess_image`, denormalizes with `ckpt["stats"]`).
 - **`--exec-horizon`:** default `0` = run the **full chunk open-loop** then re-plan (correct for an absolute-position ACT). `--exec-horizon 1` (single-step receding) **stalls** because `action[0] ≈ current state`.
 
+### Step 9 (alt) — Hands-off data collection (no phone) · 2 terminals
+The scripted FrankaPickPlace expert plays both teleoperator and recorder driver: it randomizes the
+cube each cycle, drives the recorder via `/record/command`, mirrors its joint targets onto
+`/joint_command`, and auto-labels each episode by `fs.cube_in_bin`. Add `--tactile` to also log the
+gripper force field. Unlimited auto-labeled demos for the ablation — **not** a substitute for human
+teleop data.
+```bash
+# A — expert drives + orchestrates the recorder:
+pixi run franka-auto-record --tactile --cycles 50
+# B — the recorder (settle 0; the auto loop owns reset+settle). record-tac adds the tactile camera:
+pixi run -e ros record-tac
+```
+- **Files:** `isaac/load_franka_pickplace.py` (`run_autonomous` + `--record`), `isaac/tactile.py`.
+
+### Step 10 — Tactile-modality ablation (does tactile raise success rate?) · `ros` env
+Train **two** policies on the **same** tactile-inclusive dataset (differ in one variable: tactile in/out),
+then score each closed-loop and compare.
+```bash
+pixi run -e ros stats && pixi run -e ros cache
+pixi run -e ros train-notac   # vision + joints        -> act_notac.pt
+pixi run -e ros train-tac     # + tactile camera       -> act_tac.pt
+# Closed-loop success rate for each (compare the printed %):
+pixi run franka-eval            ; pixi run -e ros infer-notac     # rate A  (Terminal A then B)
+pixi run franka-eval --tactile  ; pixi run -e ros infer-tac       # rate B
+```
+- **Files:** `training/train.py` (`--cameras`), `isaac/load_franka_pickplace.py` (`run_eval`, `--eval`).
+- **Success rate B > A ⇒ tactile helps.** Several seeds/trials each for a real number (20 trials is noisy).
+
 ---
 
 ## 7. Sequence diagrams
@@ -415,14 +446,20 @@ sequenceDiagram
 | `franka` | default | `isaac/load_franka_pickplace.py` | pick-place scene (autonomous self-test) |
 | `franka-teleop` | default | `… --control ros` | **the launch for recording AND inference** (arm follows `/joint_command`) |
 | `franka-teleop-headless` | default | `… --control ros --headless` | same, no Isaac GUI (visualize in Rerun) |
+| `franka-auto-record` | default | `… --control auto --record` | hands-off: scripted expert collects + auto-labels demos (`+ --tactile`) |
+| `franka-eval` | default | `… --control ros --eval` | closed-loop policy success-rate harness (`+ --tactile`) |
 | `ik-topic` / `ik-demo` | ros | `teleop.joint_command_node` | IK node (follow `/target_frame` / scripted) |
 | `arkit` | ros | `teleop.arkit_receiver` | phone → `/target_frame` + `/gripper_command` |
 | `robot-model` / `sniff` | ros | `teleop.robot_state_pub` / `sniff_stream` | rviz model / UDP packet sniffer |
+| `rr-viz` | ros | `teleop.rr_viz` | live Rerun: camera feeds + one all-joint plot |
 | `record` | ros | `data.record` | record demos → `.rrd` + `meta.json` |
+| `record-auto` / `record-tac` | ros | `data.record --settle-secs 0` | recorder for `franka-auto-record` (`-tac` adds the tactile camera) |
 | `reset` | ros | (`ros2 topic pub` ×5) | re-home arm + randomize cube |
 | `eval-rrd` / `stats` / `cache` | ros | `data.dataset` / `data.stats` / `data.cache` | read+verify / normalization / frame cache |
 | `smoke-act`/`train` · `smoke-dp`/`train-dp` | ros | `training.train` | 50-step sanity / full train (ACT or Diffusion) |
+| `train-tac` / `train-notac` | ros | `training.train [--cameras wrist scene]` | the modality-ablation pair (± tactile, same data) |
 | `infer` / `infer-dp` | ros | `inference.infer_node` | policy → `/joint_command` (closed-loop; model auto-detected from ckpt) |
+| `infer-tac` / `infer-notac` | ros | `inference.infer_node --ckpt … --cameras …` | the ablation policies (pair with `franka-eval`) |
 
 ---
 

@@ -44,8 +44,8 @@ VLA** (LLM backbone, vision encoder replaced by an embedding layer). The pipelin
 | `.claude/skills/` | Project skills (e.g. `deps-doc-check`). |
 
 ## Environments & how to run (pixi)
-- `default` — launches the Isaac Sim 6.0 **standalone binary** (`.isaac-sim` symlink) via `scripts/run_isaac.sh`. Tasks: `franka`, `franka-headless`, `franka-ros`, `isaac-sim`.
-- `ros` — **RoboStack ROS2 Jazzy, Python 3.12** + `torch 2.10+cu128` (Blackwell/RTX-5060, cuda ✓) + `rerun-sdk[catalog]==0.33.0` (pypi, layered on the conda solve). **ONE env for ALL of Phase 7 — record + read + train + infer.** (The separate `train` env was **merged in 2026-06-09**: conda `numpy 2.4.x` satisfies torch+pyarrow → no ABI clobber, one torch, ~7 GB freed; `cv2`/`numpy`/`pinocchio` come from conda.) Tasks: `ros-topics`, `ros-joints`, `ik-demo`, `ik-topic`, `arkit`, `robot-model`, `sniff`, `record`, `cam-hz`, `eval-rrd`, `stats`, `smoke-act`, `train` (+ `infer` to come).
+- `default` — launches the Isaac Sim 6.0 **standalone binary** (`.isaac-sim` symlink) via `scripts/run_isaac.sh`. Tasks: `franka`, `franka-headless`, `franka-ros`, `franka-teleop`, `franka-auto-record` (hands-off scripted-expert data collection), `franka-eval` (closed-loop policy success-rate harness), `isaac-sim`.
+- `ros` — **RoboStack ROS2 Jazzy, Python 3.12** + `torch 2.10+cu128` (Blackwell/RTX-5060, cuda ✓) + `rerun-sdk[catalog]==0.33.0` (pypi, layered on the conda solve). **ONE env for ALL of Phase 7 — record + read + train + infer.** (The separate `train` env was **merged in 2026-06-09**: conda `numpy 2.4.x` satisfies torch+pyarrow → no ABI clobber, one torch, ~7 GB freed; `cv2`/`numpy`/`pinocchio` come from conda.) Tasks: `ros-topics`, `ros-joints`, `ik-demo`, `ik-topic`, `arkit`, `robot-model`, `sniff`, `record`, `record-auto` (recorder for `franka-auto-record`), `record-tac` (+ tactile modality), `cam-hz`, `eval-rrd`, `stats`, `smoke-act`, `train`, `infer`, `train-tac`/`train-notac` + `infer-tac`/`infer-notac` (tactile-modality ablation).
 - Sim runs from the binary's own Python; the ROS env talks to it over **localhost FastDDS, `ROS_DOMAIN_ID=0`**.
 - **Known gotcha:** pixi envs were built before a folder rename, so console scripts (`ros2`, `cv2`) had stale baked paths. Workaround in place: symlink `~/franka-arktit-teleop → <repo>`. Clean fix: `rm -rf .pixi && pixi install`.
 - **Working rule for accurate code: pin a version → install it → introspect the installed package** (below).
@@ -80,7 +80,7 @@ decisions/narrative/plan → `PROJECT.md`; machine contract → code.
 - **Commit messages** end with `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`. **Commit/push only when asked**; branch off `main` first.
 
 ## Key ROS2 topics
-`/joint_states` (9 DOF, ~40–70 Hz) · `/joint_command` (action: 7 arm + 2 finger) · `/target_frame` (PoseStamped, EE pose cmd) · `/gripper_command` (Float64; 0.04 open / 0.0 closed) · `/wrist_cam/image_raw` (640×480) · `/scene_cam/image_raw` (1280×720) · `/tf` · `/clock`.
+`/joint_states` (9 DOF, ~40–70 Hz) · `/joint_command` (action: 7 arm + 2 finger) · `/target_frame` (PoseStamped, EE pose cmd) · `/gripper_command` (Float64; 0.04 open / 0.0 closed) · `/wrist_cam/image_raw` (640×480) · `/scene_cam/image_raw` (1280×720) · `/tactile/image_raw` (per-pad 32×12 force field, side by side, jet colormap, `--tactile`) · `/tf` · `/clock`.
 
 # DOX framework
 

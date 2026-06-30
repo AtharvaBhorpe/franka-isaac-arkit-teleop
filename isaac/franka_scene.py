@@ -428,25 +428,40 @@ def add_camera(prim_path, eye, target, resolution, focal,
     return cam, prim
 
 
-def retarget_release_to_bin(sim_app, pick_place, bin_prim, warmup=20):
-    """Aim FrankaPickPlace's release at the bin's TRUE world-bbox center.
+def bin_world_aabb(bin_prim):
+    """The bin's true world-space axis-aligned bbox -> (min, max) np arrays.
 
-    The KLT asset pivot is offset, so placing the prim at BIN_XY does NOT center it
-    there. We warm up a few frames so the bin payload streams in + renders, read
-    its world bounding box, and release ABOVE the rim so the cube clears the walls
-    and drops in rather than catching the edge.
+    The KLT asset pivot is offset, so the prim translate is NOT its center; read the
+    rendered world bound. Caller must have warmed up a few frames so the payload streamed in.
     """
     from pxr import Usd, UsdGeom
 
-    for _ in range(warmup):
-        sim_app.update()
     bbox_cache = UsdGeom.BBoxCache(
         Usd.TimeCode.Default(),
         includedPurposes=[UsdGeom.Tokens.default_, UsdGeom.Tokens.render],
         useExtentsHint=True,
     )
-    bin_range = bbox_cache.ComputeWorldBound(bin_prim).ComputeAlignedRange()
-    bmin, bmax = bin_range.GetMin(), bin_range.GetMax()
+    r = bbox_cache.ComputeWorldBound(bin_prim).ComputeAlignedRange()
+    return np.array(r.GetMin(), dtype=float), np.array(r.GetMax(), dtype=float)
+
+
+def cube_in_bin(cube_pos, bmin, bmax) -> bool:
+    """Success label: cube center inside the bin footprint (xy) and below the rim top (z)."""
+    return bool(bmin[0] <= cube_pos[0] <= bmax[0]
+                and bmin[1] <= cube_pos[1] <= bmax[1]
+                and cube_pos[2] <= bmax[2])
+
+
+def retarget_release_to_bin(sim_app, pick_place, bin_prim, warmup=20):
+    """Aim FrankaPickPlace's release at the bin's TRUE world-bbox center.
+
+    We warm up a few frames so the bin payload streams in + renders, read its world
+    bounding box, and release ABOVE the rim so the cube clears the walls and drops in
+    rather than catching the edge.
+    """
+    for _ in range(warmup):
+        sim_app.update()
+    bmin, bmax = bin_world_aabb(bin_prim)
     pick_place.target_position = np.array([
         (bmin[0] + bmax[0]) / 2.0,   # bin center x
         (bmin[1] + bmax[1]) / 2.0,   # bin center y

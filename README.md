@@ -8,12 +8,14 @@ phone. It reuses the Pinocchio servo-IK *technique* from
 [SpesRobotics/teleop](https://github.com/SpesRobotics/teleop) — not the package;
 the ARKit input path is our own.
 
-This is a **proof-of-concept** phase: no LeRobot, no learning, no tactile
-sensing. The goal is a working real-time teleop loop with all telemetry
-verified.
+The **teleop PoC (Phases 0–6) works** end-to-end. The project is now in **Phase 7 —
+imitation learning over Rerun `.rrd`**: record demos (manually, or hands-off via the
+scripted expert) → train a policy (ACT / Diffusion) → let it drive the arm closed-loop.
+A simulated **gripper tactile sensor** (`--tactile`) adds a force-field modality, with a
+success-rate harness to test whether it helps. (No LeRobot — the pipeline is in-house.)
 
 - **New here? Follow [docs/HOWTO.md](docs/HOWTO.md)** — clone→install→run, step by
-  step (covers Phases 0–6).
+  step (Phases 0–6 + the Phase-7 record/train/infer + ablation runbook).
 - **Lost in the files?** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — what each file does, how
   they connect (diagrams), and an end-to-end runbook (teleop → record → train → infer).
 - Plan, decisions, and rationale: [PROJECT.md](PROJECT.md).

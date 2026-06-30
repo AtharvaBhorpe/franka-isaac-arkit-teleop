@@ -19,6 +19,10 @@ chunked tensors. Multi-rate sync is done at LOAD time, so native rates are kept 
 - One `.rrd` per episode + a `meta.json` (`core.config.EpisodeMeta`); `success=False` is excluded
   from training by default.
 - Cameras are logged as `EncodedImage` JPEG (per-frame random access; sidesteps video keyframe-seek).
+  Any image topic is a camera here — e.g. the gripper tactile 32×12 normal+shear force field
+  (`/tactile/image_raw`, from Isaac `--tactile`) rides this seam with no schema change (`record-tac`).
+  Caveat: a 32×12 grid JPEG'd + resized to 224² in `dataset.py` is lossy — if taxel crispness matters,
+  log tactile as a raw-tensor modality in `core.schema` instead.
 - **Alignment = latest-at on `log_time`, NOT `sim_time`** — our ROS nodes wall-stamp
   `/joint_command` + `/target_frame` while Isaac sim-stamps the rest, so `sim_time` is mixed-axis.
   The action chunk is the next-CHUNK window after each grid point.
